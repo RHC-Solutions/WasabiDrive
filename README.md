@@ -104,6 +104,11 @@ The installer bundles `rclone.exe`, installs WinFsp if absent, and creates short
 - `--vfs-cache-mode full` is the default for best app compatibility; tune per-mapping or globally.
 - Not code-signed yet — SmartScreen may warn on first run.
 
+## Testing
+
+See [docs/TESTING.md](docs/TESTING.md) for the manual smoke-test checklist (login task, drive-letter
+mode, Files On-Demand hydrate/pin/free-space, two-way sync, remote pull, sidebar entry, updates).
+
 ## License
 
 Copyright © [RHC Solutions](https://rhcsolutions.com/). All rights reserved. See [LICENSE](LICENSE).
