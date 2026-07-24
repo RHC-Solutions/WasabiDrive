@@ -99,6 +99,8 @@ public sealed class AppController
     public async Task DeleteMappingAsync(MappingViewModel vm)
     {
         await UnmountAsync(vm).ConfigureAwait(true);
+        if (vm.Model.Mode == MappingMode.OnDemandFolder)
+            OnDemandSyncManager.RemoveNavPaneEntry(vm.Model.Id);
         _credentialStore.Remove(vm.Model.Id);
         Mappings.Remove(vm);
         PersistMappings();

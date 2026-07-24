@@ -1,12 +1,13 @@
 using System.Collections.Concurrent;
+using WasabiDrive.Core.Sync;
 
 namespace WasabiDrive.CloudFiles;
 
 /// <summary>
 /// Watches an on-demand folder and pushes local changes up to Wasabi: new/edited files are
-/// uploaded and marked in-sync, deletes remove the object, and renames become a server-side move.
-/// Writes caused by hydration (Windows filling a placeholder) and by our own in-sync marking are
-/// ignored so they don't cause upload loops.
+/// uploaded and marked in-sync, deletes remove the object (cascading for folders), and renames
+/// become server-side moves (cascading for folders). A persisted <see cref="SyncStateStore"/> lets
+/// it skip redundant uploads and recognise hydration/self writes so they don't cause upload loops.
 /// </summary>
 internal sealed class LocalChangeSyncer : IDisposable
 {
@@ -17,6 +18,7 @@ internal sealed class LocalChangeSyncer : IDisposable
     private readonly string _prefix;
     private readonly WasabiS3Client _s3;
     private readonly CloudFilesProvider _provider;
+    private readonly SyncStateStore _state;
     private readonly Action<string>? _log;
 
     private readonly ConcurrentDictionary<string, DateTime> _ignoreUntil = new(StringComparer.OrdinalIgnoreCase);
@@ -24,12 +26,14 @@ internal sealed class LocalChangeSyncer : IDisposable
     private readonly Timer _debounce;
     private FileSystemWatcher? _watcher;
 
-    public LocalChangeSyncer(string syncRoot, string prefix, WasabiS3Client s3, CloudFilesProvider provider, Action<string>? log)
+    public LocalChangeSyncer(string syncRoot, string prefix, WasabiS3Client s3,
+        CloudFilesProvider provider, SyncStateStore state, Action<string>? log)
     {
         _syncRoot = syncRoot;
         _prefix = prefix;
         _s3 = s3;
         _provider = provider;
+        _state = state;
         _log = log;
         _debounce = new Timer(_ => ProcessPending(), null, Timeout.Infinite, Timeout.Infinite);
         _provider.Hydrated += OnHydrated;
@@ -51,7 +55,27 @@ internal sealed class LocalChangeSyncer : IDisposable
         _log?.Invoke($"Two-way sync watching {_syncRoot}");
     }
 
-    private void OnHydrated(string key) => Ignore(LocalPathForKey(key));
+    /// <summary>After hydration, record the file's state so it isn't mistaken for a local edit.</summary>
+    private void OnHydrated(string key)
+    {
+        var path = LocalPathForKey(key);
+        Ignore(path);
+        try
+        {
+            var info = new FileInfo(path);
+            if (!info.Exists) return;
+            var known = _state.Get(key);
+            _state.Set(new SyncEntry
+            {
+                Key = key,
+                ETag = known?.ETag,
+                Size = info.Length,
+                LocalModifiedUtcTicks = info.LastWriteTimeUtc.Ticks,
+                RemoteModifiedUtcTicks = known?.RemoteModifiedUtcTicks ?? 0,
+            });
+        }
+        catch { /* best-effort */ }
+    }
 
     private void Ignore(string path) => _ignoreUntil[path] = DateTime.UtcNow.AddSeconds(IgnoreSeconds);
 
@@ -60,7 +84,7 @@ internal sealed class LocalChangeSyncer : IDisposable
 
     private void QueueChange(string path)
     {
-        if (Directory.Exists(path)) return; // directories are created implicitly by object keys
+        if (Directory.Exists(path)) return;
         _pending[path] = 1;
         _debounce.Change(DebounceMs, Timeout.Infinite);
     }
@@ -79,16 +103,32 @@ internal sealed class LocalChangeSyncer : IDisposable
         {
             if (!File.Exists(path) || IsIgnored(path)) return;
             if (CloudFilesProvider.IsDehydrated(path)) return; // cloud-only placeholder, nothing local to push
-            if (IsLocked(path)) { QueueChange(path); return; } // still being written; try again shortly
+            if (IsLocked(path)) { QueueChange(path); return; }
 
+            var info = new FileInfo(path);
             var key = KeyForLocalPath(path);
-            Ignore(path); // suppress the writes our own in-sync marking will cause
-            await _s3.PutObjectAsync(key, path).ConfigureAwait(false);
+            var known = _state.Get(key);
 
-            // Mark it in-sync; if it was a brand-new normal file, convert it into a placeholder.
+            var action = SyncReconciler.DecideUpload(
+                info.Length, info.LastWriteTimeUtc.Ticks, known, remoteChangedSinceSync: false);
+            if (action == UploadAction.Skip) return;
+
+            Ignore(path); // suppress the writes our own in-sync marking will cause
+            string? etag = null;
+            await S3Retry.RunAsync(async () => etag = await _s3.PutObjectAsync(key, path).ConfigureAwait(false), _log)
+                .ConfigureAwait(false);
+
             try { _provider.MarkInSync(path); }
             catch { try { _provider.ConvertToPlaceholder(path, key); } catch { /* leave as normal file */ } }
 
+            _state.Set(new SyncEntry
+            {
+                Key = key,
+                ETag = etag,
+                Size = info.Length,
+                LocalModifiedUtcTicks = info.LastWriteTimeUtc.Ticks,
+                RemoteModifiedUtcTicks = DateTime.UtcNow.Ticks,
+            });
             _log?.Invoke($"Uploaded {key}");
         }
         catch (Exception ex)
@@ -102,22 +142,54 @@ internal sealed class LocalChangeSyncer : IDisposable
         var path = e.FullPath;
         if (IsIgnored(path)) return;
         var key = KeyForLocalPath(path);
+        // The path is already gone, so we can't tell file vs directory — handle both: delete the
+        // exact object and every tracked object beneath it (folder cascade).
+        var childPrefix = key + "/";
+        var keysToDelete = new List<string> { key };
+        keysToDelete.AddRange(_state.Keys.Where(k => k.StartsWith(childPrefix, StringComparison.Ordinal)));
+
         _ = Task.Run(async () =>
         {
-            try { await _s3.DeleteObjectAsync(key).ConfigureAwait(false); _log?.Invoke($"Deleted {key}"); }
-            catch (Exception ex) { _log?.Invoke($"Delete of '{key}' failed: {ex.Message}"); }
+            foreach (var k in keysToDelete.Distinct())
+            {
+                try
+                {
+                    await S3Retry.RunAsync(() => _s3.DeleteObjectAsync(k), _log).ConfigureAwait(false);
+                    _state.Remove(k);
+                    _log?.Invoke($"Deleted {k}");
+                }
+                catch (Exception ex) { _log?.Invoke($"Delete of '{k}' failed: {ex.Message}"); }
+            }
         });
     }
 
     private void OnRenamed(object sender, RenamedEventArgs e)
     {
-        if (Directory.Exists(e.FullPath)) return; // directory renames aren't reconciled in this milestone
         var oldKey = KeyForLocalPath(e.OldFullPath);
         var newKey = KeyForLocalPath(e.FullPath);
+        var isDirectory = Directory.Exists(e.FullPath);
+
+        var moves = new List<(string From, string To)>();
+        if (!isDirectory) moves.Add((oldKey, newKey));
+        var oldPrefix = oldKey + "/";
+        var newPrefix = newKey + "/";
+        foreach (var k in _state.Keys.Where(k => k.StartsWith(oldPrefix, StringComparison.Ordinal)))
+            moves.Add((k, newPrefix + k[oldPrefix.Length..]));
+
         _ = Task.Run(async () =>
         {
-            try { await _s3.MoveObjectAsync(oldKey, newKey).ConfigureAwait(false); _log?.Invoke($"Renamed {oldKey} -> {newKey}"); }
-            catch (Exception ex) { _log?.Invoke($"Rename '{oldKey}' failed: {ex.Message}"); }
+            foreach (var (from, to) in moves)
+            {
+                try
+                {
+                    await S3Retry.RunAsync(() => _s3.MoveObjectAsync(from, to), _log).ConfigureAwait(false);
+                    var known = _state.Get(from);
+                    _state.Remove(from);
+                    if (known is not null) { known.Key = to; _state.Set(known); }
+                    _log?.Invoke($"Renamed {from} -> {to}");
+                }
+                catch (Exception ex) { _log?.Invoke($"Rename '{from}' failed: {ex.Message}"); }
+            }
         });
     }
 

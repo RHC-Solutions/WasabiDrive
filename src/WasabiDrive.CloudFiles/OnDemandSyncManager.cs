@@ -1,27 +1,33 @@
 using System.Text;
 using WasabiDrive.Core.Models;
+using WasabiDrive.Core.Sync;
 
 namespace WasabiDrive.CloudFiles;
 
 /// <summary>
 /// Orchestrates one bucket's Files On-Demand folder: builds the S3 client and
 /// <see cref="CloudFilesProvider"/>, registers/connects the sync root, populates placeholders from
-/// the bucket listing, and exposes pin / free-up-space / auto-dehydrate operations.
-/// One-way (read) for this milestone.
+/// the bucket listing, pushes local changes back up (two-way), periodically pulls remote changes,
+/// and exposes pin / free-up-space / auto-dehydrate operations.
 /// </summary>
 public sealed class OnDemandSyncManager : IDisposable
 {
     private readonly Mapping _mapping;
+    private readonly string _prefix;
     private readonly WasabiS3Client _s3;
     private readonly CloudFilesProvider _provider;
+    private readonly SyncStateStore _state;
     private readonly Action<string>? _log;
     private LocalChangeSyncer? _syncer;
+    private Timer? _remotePull;
 
     public OnDemandSyncManager(Mapping mapping, WasabiCredentials credentials, Action<string>? log = null)
     {
         _mapping = mapping ?? throw new ArgumentNullException(nameof(mapping));
         _log = log;
+        _prefix = NormalizePrefix(mapping.SubPath);
         _s3 = WasabiS3Client.ForMapping(mapping, credentials);
+        _state = new SyncStateStore(SyncStateStore.FilePathFor(mapping.Id));
 
         SyncRootPath = ResolveFolderPath(mapping);
         _provider = new CloudFilesProvider(
@@ -58,13 +64,19 @@ public sealed class OnDemandSyncManager : IDisposable
         await PopulateAsync(ct).ConfigureAwait(false);
 
         // Start the watcher after population so the initial placeholders don't look like new files.
-        _syncer = new LocalChangeSyncer(SyncRootPath, NormalizePrefix(_mapping.SubPath), _s3, _provider, _log);
+        _syncer = new LocalChangeSyncer(SyncRootPath, _prefix, _s3, _provider, _state, _log);
         _syncer.Start();
+
+        // Periodically pull remote changes (new/updated/deleted objects) into the folder.
+        _remotePull = new Timer(_ => _ = ReconcileRemoteAsync(), null,
+            TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
     }
 
     /// <summary>Disconnects hydration and local-change syncing but leaves the folder in place.</summary>
     public void Disable()
     {
+        _remotePull?.Dispose();
+        _remotePull = null;
         _syncer?.Dispose();
         _syncer = null;
         _provider.Disconnect();
@@ -83,27 +95,15 @@ public sealed class OnDemandSyncManager : IDisposable
     /// </summary>
     public async Task PopulateAsync(CancellationToken ct = default)
     {
-        var prefix = NormalizePrefix(_mapping.SubPath);
         var byDirectory = new Dictionary<string, List<PlaceholderInfo>>(StringComparer.OrdinalIgnoreCase);
 
-        await foreach (var obj in _s3.ListObjectsAsync(prefix, ct).ConfigureAwait(false))
+        await foreach (var obj in _s3.ListObjectsAsync(_prefix, ct).ConfigureAwait(false))
         {
             if (obj.Key.EndsWith('/')) continue; // folder marker
+            if (!TrySplitKey(obj.Key, out var relativeDir, out var fileName)) continue;
 
-            var relativeKey = prefix.Length > 0 && obj.Key.StartsWith(prefix, StringComparison.Ordinal)
-                ? obj.Key[prefix.Length..]
-                : obj.Key;
-            relativeKey = relativeKey.TrimStart('/');
-            if (relativeKey.Length == 0) continue;
-
-            var segments = relativeKey.Split('/');
-            var fileName = segments[^1];
-            var relativeDir = segments.Length > 1
-                ? string.Join(Path.DirectorySeparatorChar, segments[..^1])
-                : string.Empty;
-
-            var fullPath = Path.Combine(SyncRootPath,
-                relativeDir.Length == 0 ? fileName : Path.Combine(relativeDir, fileName));
+            var fullPath = LocalPathForRelative(relativeDir, fileName);
+            RecordRemoteState(obj); // track etag/size so we can detect future remote changes
             if (File.Exists(fullPath)) continue; // already created/hydrated
 
             if (!byDirectory.TryGetValue(relativeDir, out var list))
@@ -119,6 +119,131 @@ public sealed class OnDemandSyncManager : IDisposable
         }
         _log?.Invoke($"On-demand folder '{SyncRootPath}': {created} placeholder(s) created.");
     }
+
+    /// <summary>
+    /// Pulls remote changes into the folder: new objects become placeholders, objects deleted
+    /// remotely have their (clean, cloud-only) placeholders removed, and remote updates refresh
+    /// cloud-only placeholders. Hydrated or locally-changed files are never overwritten — those
+    /// are logged as conflicts (local wins).
+    /// </summary>
+    public async Task ReconcileRemoteAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            await foreach (var obj in _s3.ListObjectsAsync(_prefix, ct).ConfigureAwait(false))
+            {
+                if (obj.Key.EndsWith('/')) continue;
+                if (!TrySplitKey(obj.Key, out var relativeDir, out var fileName)) continue;
+                seen.Add(obj.Key);
+
+                var fullPath = LocalPathForRelative(relativeDir, fileName);
+                var known = _state.Get(obj.Key);
+                var localExists = File.Exists(fullPath);
+                var localDirty = IsLocalDirty(fullPath, known);
+
+                var action = SyncReconciler.DecideRemote(obj.ETag, remoteExists: true, known, localExists, localDirty);
+                switch (action)
+                {
+                    case RemoteAction.CreatePlaceholder:
+                        try
+                        {
+                            _provider.CreatePlaceholders(relativeDir,
+                                new[] { new PlaceholderInfo(fileName, obj.Key, obj.Size, obj.LastModifiedUtc) });
+                            RecordRemoteState(obj);
+                        }
+                        catch (Exception ex) { _log?.Invoke($"Pull-create '{obj.Key}' failed: {ex.Message}"); }
+                        break;
+
+                    case RemoteAction.UpdatePlaceholder:
+                        // Only safe to refresh when there is no local data to lose.
+                        if (CloudFilesProvider.IsDehydrated(fullPath))
+                        {
+                            try { File.Delete(fullPath); } catch { /* ignore */ }
+                            try
+                            {
+                                _provider.CreatePlaceholders(relativeDir,
+                                    new[] { new PlaceholderInfo(fileName, obj.Key, obj.Size, obj.LastModifiedUtc) });
+                                RecordRemoteState(obj);
+                            }
+                            catch (Exception ex) { _log?.Invoke($"Pull-update '{obj.Key}' failed: {ex.Message}"); }
+                        }
+                        else
+                        {
+                            _log?.Invoke($"Conflict (remote changed, local present): {obj.Key} — keeping local.");
+                        }
+                        break;
+
+                    case RemoteAction.Conflict:
+                        _log?.Invoke($"Conflict on {obj.Key} — keeping local copy.");
+                        break;
+                }
+            }
+
+            // Objects we tracked but that are gone remotely: remove clean cloud-only placeholders.
+            foreach (var key in _state.Keys)
+            {
+                if (seen.Contains(key)) continue;
+                if (!TrySplitKey(key, out var dir, out var name)) { _state.Remove(key); continue; }
+                var fullPath = LocalPathForRelative(dir, name);
+                if (!File.Exists(fullPath)) { _state.Remove(key); continue; }
+                if (CloudFilesProvider.IsDehydrated(fullPath))
+                {
+                    try { File.Delete(fullPath); _state.Remove(key); _log?.Invoke($"Removed (deleted remotely): {key}"); }
+                    catch (Exception ex) { _log?.Invoke($"Remove '{key}' failed: {ex.Message}"); }
+                }
+                else
+                {
+                    _log?.Invoke($"Conflict (deleted remotely, local present): {key} — keeping local.");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _log?.Invoke($"Remote reconcile failed: {ex.Message}");
+        }
+    }
+
+    private bool IsLocalDirty(string fullPath, SyncEntry? known)
+    {
+        try
+        {
+            if (!File.Exists(fullPath)) return false;
+            if (CloudFilesProvider.IsDehydrated(fullPath)) return false; // no local data
+            var info = new FileInfo(fullPath);
+            return known is null
+                || known.Size != info.Length
+                || known.LocalModifiedUtcTicks != info.LastWriteTimeUtc.Ticks;
+        }
+        catch { return false; }
+    }
+
+    private void RecordRemoteState(S3ObjectEntry obj) => _state.Set(new SyncEntry
+    {
+        Key = obj.Key,
+        ETag = obj.ETag,
+        Size = obj.Size,
+        RemoteModifiedUtcTicks = obj.LastModifiedUtc.Ticks,
+    });
+
+    private bool TrySplitKey(string key, out string relativeDir, out string fileName)
+    {
+        relativeDir = string.Empty;
+        fileName = string.Empty;
+        var relativeKey = _prefix.Length > 0 && key.StartsWith(_prefix, StringComparison.Ordinal)
+            ? key[_prefix.Length..]
+            : key;
+        relativeKey = relativeKey.TrimStart('/');
+        if (relativeKey.Length == 0) return false;
+        var segments = relativeKey.Split('/');
+        fileName = segments[^1];
+        relativeDir = segments.Length > 1 ? string.Join(Path.DirectorySeparatorChar, segments[..^1]) : string.Empty;
+        return true;
+    }
+
+    private string LocalPathForRelative(string relativeDir, string fileName) =>
+        Path.Combine(SyncRootPath, relativeDir.Length == 0 ? fileName : Path.Combine(relativeDir, fileName));
 
     /// <summary>
     /// "Return to cloud after some time": dehydrates hydrated, unpinned files whose last access is
@@ -157,10 +282,18 @@ public sealed class OnDemandSyncManager : IDisposable
     private void ApplyBranding()
     {
         var exe = Environment.ProcessPath;
-        if (!string.IsNullOrWhiteSpace(exe))
-            FolderBranding.Apply(SyncRootPath, exe + ",0",
-                tooltip: $"WasabiDrive — {_mapping.BucketName} (Files On-Demand)");
+        if (string.IsNullOrWhiteSpace(exe)) return;
+
+        var iconResource = exe + ",0";
+        FolderBranding.Apply(SyncRootPath, iconResource,
+            tooltip: $"WasabiDrive — {_mapping.BucketName} (Files On-Demand)");
+
+        var displayName = string.IsNullOrWhiteSpace(_mapping.Name) ? _mapping.BucketName : _mapping.Name;
+        NavPaneRegistration.Register(_mapping.Id, $"WasabiDrive - {displayName}", SyncRootPath, iconResource);
     }
+
+    /// <summary>Removes the Explorer sidebar entry for a mapping (used when it is deleted).</summary>
+    public static void RemoveNavPaneEntry(Guid mappingId) => NavPaneRegistration.Unregister(mappingId);
 
     private static string NormalizePrefix(string? subPath)
     {
@@ -178,6 +311,7 @@ public sealed class OnDemandSyncManager : IDisposable
 
     public void Dispose()
     {
+        _remotePull?.Dispose();
         _syncer?.Dispose();
         _provider.Dispose();
         _s3.Dispose();

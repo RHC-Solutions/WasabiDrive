@@ -9,7 +9,8 @@ namespace WasabiDrive.CloudFiles;
 /// <param name="Key">Full S3 key.</param>
 /// <param name="Size">Size in bytes.</param>
 /// <param name="LastModifiedUtc">Last-modified timestamp (UTC).</param>
-public sealed record S3ObjectEntry(string Key, long Size, DateTime LastModifiedUtc);
+/// <param name="ETag">Object ETag (used to detect remote changes).</param>
+public sealed record S3ObjectEntry(string Key, long Size, DateTime LastModifiedUtc, string? ETag);
 
 /// <summary>
 /// Thin wrapper over the AWS S3 SDK pointed at a Wasabi region endpoint. Used by the Cloud Files
@@ -63,7 +64,7 @@ public sealed class WasabiS3Client : IDisposable
         {
             response = await _s3.ListObjectsV2Async(request, ct).ConfigureAwait(false);
             foreach (var o in response.S3Objects)
-                yield return new S3ObjectEntry(o.Key, o.Size, o.LastModified.ToUniversalTime());
+                yield return new S3ObjectEntry(o.Key, o.Size, o.LastModified.ToUniversalTime(), o.ETag);
             request.ContinuationToken = response.NextContinuationToken;
         }
         while (response.IsTruncated);
@@ -85,8 +86,8 @@ public sealed class WasabiS3Client : IDisposable
         return response.ResponseStream;
     }
 
-    /// <summary>Uploads a local file to <paramref name="key"/> (overwrites).</summary>
-    public async Task PutObjectAsync(string key, string localPath, CancellationToken ct = default)
+    /// <summary>Uploads a local file to <paramref name="key"/> (overwrites). Returns the new ETag.</summary>
+    public async Task<string?> PutObjectAsync(string key, string localPath, CancellationToken ct = default)
     {
         var request = new PutObjectRequest
         {
@@ -95,7 +96,8 @@ public sealed class WasabiS3Client : IDisposable
             FilePath = localPath,
             DisablePayloadSigning = true, // large-file friendly against S3-compatible endpoints
         };
-        await _s3.PutObjectAsync(request, ct).ConfigureAwait(false);
+        var response = await _s3.PutObjectAsync(request, ct).ConfigureAwait(false);
+        return response.ETag;
     }
 
     /// <summary>Deletes an object.</summary>
