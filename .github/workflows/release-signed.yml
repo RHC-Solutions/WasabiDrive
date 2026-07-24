@@ -1,0 +1,122 @@
+name: Release (signed)
+
+# Triggered by pushing a version tag (e.g. v0.5.0), typically via:
+#   scripts\release.ps1 -Version 0.5.0 -TagOnly
+# Builds the installer on a Windows runner, signs it via SignPath, and publishes the GitHub release.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build & sign (e.g. v0.5.0)"
+        required: true
+
+permissions:
+  contents: write   # create releases
+  id-token: write   # SignPath OIDC trust of this build
+
+env:
+  WINFSP_MSI_URL: "https://github.com/winfsp/winfsp/releases/download/v2.0/winfsp-2.0.23075.msi"
+  RCLONE_ZIP_URL: "https://downloads.rclone.org/rclone-current-windows-amd64.zip"
+
+jobs:
+  build-sign-release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Require SignPath configuration
+        shell: pwsh
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORG_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+        run: |
+          if (-not $env:SIGNPATH_API_TOKEN -or -not $env:SIGNPATH_ORG_ID) {
+            Write-Error "SignPath is not configured. Add repo secret SIGNPATH_API_TOKEN and variable SIGNPATH_ORGANIZATION_ID (see docs/SIGNING.md)."
+          }
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Fetch bundled binaries (rclone + WinFsp)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force third_party\rclone, third_party\winfsp | Out-Null
+          Invoke-WebRequest $env:RCLONE_ZIP_URL -OutFile rclone.zip
+          Expand-Archive rclone.zip -DestinationPath rclone_tmp -Force
+          Copy-Item (Get-ChildItem rclone_tmp -Recurse -Filter rclone.exe | Select-Object -First 1).FullName third_party\rclone\rclone.exe
+          Invoke-WebRequest $env:WINFSP_MSI_URL -OutFile third_party\winfsp\winfsp.msi
+
+      - name: Resolve version from tag
+        id: ver
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.inputs.tag || github.ref_name }}"
+          $v = $tag.TrimStart('v')
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "tag=$tag"   | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Build installer (unsigned)
+        shell: pwsh
+        run: .\scripts\build-installer.ps1
+
+      - name: Stage installer for signing
+        id: stage
+        shell: pwsh
+        run: |
+          $exe = "installer\output\WasabiDrive-Setup-${{ steps.ver.outputs.version }}.exe"
+          if (-not (Test-Path $exe)) { Write-Error "Installer not found: $exe" }
+          New-Item -ItemType Directory -Force to-sign | Out-Null
+          Copy-Item $exe "to-sign\WasabiDrive-Setup-${{ steps.ver.outputs.version }}.exe"
+
+      - name: Upload unsigned artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasabidrive-installer-unsigned
+          path: to-sign\*
+
+      - name: Sign with SignPath
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: Prepare release assets
+        id: assets
+        shell: pwsh
+        run: |
+          $v = "${{ steps.ver.outputs.version }}"
+          $signed = "signed\WasabiDrive-Setup-$v.exe"
+          if (-not (Test-Path $signed)) { Write-Error "Signed installer missing: $signed" }
+          # Stable-named copy so releases/latest/download/WasabiDrive-Setup.exe keeps working.
+          Copy-Item $signed "signed\WasabiDrive-Setup.exe" -Force
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $v = "${{ steps.ver.outputs.version }}"
+          $tag = "${{ steps.ver.outputs.tag }}"
+          gh release create $tag `
+            "signed\WasabiDrive-Setup-$v.exe" "signed\WasabiDrive-Setup.exe" `
+            --repo ${{ github.repository }} `
+            --title "WasabiDrive $v" `
+            --notes "Signed release. Download WasabiDrive-Setup.exe below."

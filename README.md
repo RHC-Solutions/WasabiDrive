@@ -111,4 +111,10 @@ mode, Files On-Demand hydrate/pin/free-space, two-way sync, remote pull, sidebar
 
 ## License
 
-Copyright © [RHC Solutions](https://rhcsolutions.com/). All rights reserved. See [LICENSE](LICENSE).
+[MIT](LICENSE) © [RHC Solutions](https://rhcsolutions.com/).
+
+## Code signing
+
+Release binaries are signed via [SignPath.io](https://signpath.io) (certificate by the
+[SignPath Foundation](https://signpath.org)) so Windows SmartScreen trusts them. Signing runs in
+CI on tagged releases — see [docs/SIGNING.md](docs/SIGNING.md) for the setup.
