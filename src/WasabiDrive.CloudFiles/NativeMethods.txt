@@ -11,6 +11,12 @@ CfGetSyncRootInfoByPath
 CfGetPlaceholderStateFromFindData
 CfGetTransferKey
 CfReleaseTransferKey
+CfSetInSyncState
+CfConvertToPlaceholder
+CfUpdatePlaceholder
+CF_SET_IN_SYNC_FLAGS
+CF_CONVERT_FLAGS
+CF_UPDATE_FLAGS
 CF_PLACEHOLDER_CREATE_FLAGS
 CF_CALLBACK_TYPE
 CF_CONNECT_FLAGS

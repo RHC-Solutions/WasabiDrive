@@ -53,6 +53,10 @@ public sealed class CloudFilesProvider : IDisposable
 
     public string SyncRootPath => _syncRootPath;
 
+    /// <summary>Raised (with the S3 key) after a file finishes hydrating, so watchers can ignore
+    /// the resulting disk writes rather than treating them as user edits.</summary>
+    public event Action<string>? Hydrated;
+
     /// <summary>True if a sync root is already registered at this path.</summary>
     public unsafe bool IsRegistered()
     {
@@ -233,6 +237,35 @@ public sealed class CloudFilesProvider : IDisposable
             CF_DEHYDRATE_FLAGS.CF_DEHYDRATE_FLAG_NONE, null).ThrowOnFailure();
     }
 
+    /// <summary>Marks a file as in-sync (used after a local change is uploaded to the cloud).</summary>
+    public unsafe void MarkInSync(string fullPath)
+    {
+        using var handle = OpenFileHandle(fullPath);
+        PInvoke.CfSetInSyncState(handle, CF_IN_SYNC_STATE.CF_IN_SYNC_STATE_IN_SYNC,
+            CF_SET_IN_SYNC_FLAGS.CF_SET_IN_SYNC_FLAG_NONE, null).ThrowOnFailure();
+    }
+
+    /// <summary>
+    /// Converts a normal file created locally into an in-sync placeholder participating in
+    /// on-demand (called after the new file has been uploaded).
+    /// </summary>
+    public unsafe void ConvertToPlaceholder(string fullPath, string fileIdentity)
+    {
+        var identity = Encoding.UTF8.GetBytes(fileIdentity);
+        using var handle = OpenFileHandle(fullPath);
+        fixed (byte* pId = identity)
+        {
+            PInvoke.CfConvertToPlaceholder(handle, pId, (uint)identity.Length,
+                CF_CONVERT_FLAGS.CF_CONVERT_FLAG_MARK_IN_SYNC, null, null).ThrowOnFailure();
+        }
+    }
+
+    /// <summary>True if the file is a cloud-only (dehydrated) placeholder with no local data.</summary>
+    public static bool IsDehydrated(string fullPath) =>
+        ((int)new FileInfo(fullPath).Attributes & FileAttributeRecallOnDataAccess) != 0;
+
+    private const int FileAttributeRecallOnDataAccess = 0x00400000;
+
     private static SafeFileHandle OpenFileHandle(string path) =>
         File.OpenHandle(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
 
@@ -273,6 +306,7 @@ public sealed class CloudFilesProvider : IDisposable
                 position += read;
                 remaining -= read;
             }
+            Hydrated?.Invoke(key);
         }
         catch (Exception ex)
         {

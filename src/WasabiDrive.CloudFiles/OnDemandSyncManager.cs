@@ -15,6 +15,7 @@ public sealed class OnDemandSyncManager : IDisposable
     private readonly WasabiS3Client _s3;
     private readonly CloudFilesProvider _provider;
     private readonly Action<string>? _log;
+    private LocalChangeSyncer? _syncer;
 
     public OnDemandSyncManager(Mapping mapping, WasabiCredentials credentials, Action<string>? log = null)
     {
@@ -45,16 +46,29 @@ public sealed class OnDemandSyncManager : IDisposable
             "WasabiDrive", Sanitize(leaf));
     }
 
-    /// <summary>Registers + connects the sync root and populates placeholders from the bucket.</summary>
+    /// <summary>
+    /// Registers + connects the sync root, populates placeholders from the bucket, and starts
+    /// watching for local changes to push back up (two-way).
+    /// </summary>
     public async Task EnableAsync(CancellationToken ct = default)
     {
         _provider.Register();
+        ApplyBranding();
         _provider.Connect();
         await PopulateAsync(ct).ConfigureAwait(false);
+
+        // Start the watcher after population so the initial placeholders don't look like new files.
+        _syncer = new LocalChangeSyncer(SyncRootPath, NormalizePrefix(_mapping.SubPath), _s3, _provider, _log);
+        _syncer.Start();
     }
 
-    /// <summary>Disconnects hydration but leaves the folder + placeholders in place.</summary>
-    public void Disable() => _provider.Disconnect();
+    /// <summary>Disconnects hydration and local-change syncing but leaves the folder in place.</summary>
+    public void Disable()
+    {
+        _syncer?.Dispose();
+        _syncer = null;
+        _provider.Disconnect();
+    }
 
     /// <summary>Disconnects and removes the sync-root registration (keeps local files).</summary>
     public void Unregister() => _provider.Unregister();
@@ -140,6 +154,14 @@ public sealed class OnDemandSyncManager : IDisposable
     private const int FileAttributeRecallOnDataAccess = 0x00400000;
     private const int FileAttributePinned = 0x00080000;
 
+    private void ApplyBranding()
+    {
+        var exe = Environment.ProcessPath;
+        if (!string.IsNullOrWhiteSpace(exe))
+            FolderBranding.Apply(SyncRootPath, exe + ",0",
+                tooltip: $"WasabiDrive — {_mapping.BucketName} (Files On-Demand)");
+    }
+
     private static string NormalizePrefix(string? subPath)
     {
         if (string.IsNullOrWhiteSpace(subPath)) return string.Empty;
@@ -156,6 +178,7 @@ public sealed class OnDemandSyncManager : IDisposable
 
     public void Dispose()
     {
+        _syncer?.Dispose();
         _provider.Dispose();
         _s3.Dispose();
     }

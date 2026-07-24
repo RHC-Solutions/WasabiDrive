@@ -84,7 +84,8 @@ The installer bundles `rclone.exe`, installs WinFsp if absent, and creates short
     like OneDrive: files show in Explorer as placeholders, download only when opened, and support
     the native **Status** column/overlays and the **"Always keep on this device" / "Free up space"**
     right-click menu. Idle files are freed automatically (Storage Sense + a built-in policy using
-    the mapping's *cache max age*). One-way (read) in this release — local edits aren't uploaded yet.
+    the mapping's *cache max age*). **Two-way sync**: local edits, new files, deletes and renames
+    are pushed back to Wasabi. The folder is branded with the WasabiDrive icon.
 - **Cache tuning** — mode, max size (0 = unlimited; 1 TiB = `1048576` MiB), max age, and a
   configurable **cache location** (`--cache-dir`) so a large cache can live on a roomy drive.
   Defaults and per-mapping overrides are both supported.

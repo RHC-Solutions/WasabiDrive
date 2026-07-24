@@ -85,5 +85,36 @@ public sealed class WasabiS3Client : IDisposable
         return response.ResponseStream;
     }
 
+    /// <summary>Uploads a local file to <paramref name="key"/> (overwrites).</summary>
+    public async Task PutObjectAsync(string key, string localPath, CancellationToken ct = default)
+    {
+        var request = new PutObjectRequest
+        {
+            BucketName = _bucket,
+            Key = key,
+            FilePath = localPath,
+            DisablePayloadSigning = true, // large-file friendly against S3-compatible endpoints
+        };
+        await _s3.PutObjectAsync(request, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Deletes an object.</summary>
+    public async Task DeleteObjectAsync(string key, CancellationToken ct = default) =>
+        await _s3.DeleteObjectAsync(new DeleteObjectRequest { BucketName = _bucket, Key = key }, ct)
+            .ConfigureAwait(false);
+
+    /// <summary>Server-side copy then delete of the source (an S3 "rename").</summary>
+    public async Task MoveObjectAsync(string sourceKey, string destKey, CancellationToken ct = default)
+    {
+        await _s3.CopyObjectAsync(new CopyObjectRequest
+        {
+            SourceBucket = _bucket,
+            SourceKey = sourceKey,
+            DestinationBucket = _bucket,
+            DestinationKey = destKey,
+        }, ct).ConfigureAwait(false);
+        await DeleteObjectAsync(sourceKey, ct).ConfigureAwait(false);
+    }
+
     public void Dispose() => _s3.Dispose();
 }
