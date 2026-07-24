@@ -20,7 +20,9 @@ public sealed partial class MappingEditViewModel : ObservableObject
         SubPath = m.SubPath ?? string.Empty;
         RegionCode = m.RegionCode;
         AutoMount = m.AutoMount;
-        Mode = m.Mode;
+        // New mappings default to the on-demand folder (OneDrive/Google-Drive style); existing
+        // mappings keep whatever mode they were saved with.
+        Mode = existing?.Mode ?? MappingMode.OnDemandFolder;
         LocalFolderPath = m.LocalFolderPath ?? string.Empty;
 
         CacheMode = m.Cache.CacheMode;
@@ -52,6 +54,12 @@ public sealed partial class MappingEditViewModel : ObservableObject
     public bool IsDriveLetterMode => Mode == MappingMode.DriveLetter;
     public bool IsOnDemandMode => Mode == MappingMode.OnDemandFolder;
 
+    /// <summary>Helper text shown under the Mode dropdown explaining the selected mode.</summary>
+    public string ModeDescription => Mode == MappingMode.OnDemandFolder
+        ? "A normal folder in Explorer with cloud placeholders — files download only when opened, "
+          + "with pin / free-up-space and no drive letter. Recommended."
+        : "A virtual drive (e.g. W:) backed by rclone + WinFsp. The whole bucket appears as a mapped drive.";
+
     [ObservableProperty] private string _name = string.Empty;
     [ObservableProperty] private string _bucketName = string.Empty;
     [ObservableProperty] private string _subPath = string.Empty;
@@ -62,7 +70,8 @@ public sealed partial class MappingEditViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsDriveLetterMode))]
     [NotifyPropertyChangedFor(nameof(IsOnDemandMode))]
-    private MappingMode _mode = MappingMode.DriveLetter;
+    [NotifyPropertyChangedFor(nameof(ModeDescription))]
+    private MappingMode _mode = MappingMode.OnDemandFolder;
 
     [ObservableProperty] private string _localFolderPath = string.Empty;
 

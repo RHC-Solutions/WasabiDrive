@@ -13,6 +13,7 @@
         ShowInTaskbar="False">
     <Window.Resources>
         <conv:BoolToVisibilityConverter x:Key="BoolToVis"/>
+        <conv:MappingModeToDisplayConverter x:Key="ModeToText"/>
         <Style TargetType="TextBlock">
             <Setter Property="VerticalAlignment" Value="Center"/>
             <Setter Property="Margin" Value="0,0,10,0"/>
@@ -42,10 +43,19 @@
             <TextBlock Grid.Row="0" Grid.Column="0" Text="Display name"/>
             <TextBox   Grid.Row="0" Grid.Column="1" Margin="0,4" Text="{Binding Name}"/>
 
-            <TextBlock Grid.Row="1" Grid.Column="0" Text="Mode"/>
-            <ComboBox  Grid.Row="1" Grid.Column="1" Margin="0,4"
-                       ItemsSource="{Binding Modes}" SelectedItem="{Binding Mode}"
-                       ToolTip="Drive letter (rclone/WinFsp) or an on-demand folder (Windows Files On-Demand)."/>
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Mode" VerticalAlignment="Top" Margin="0,8,10,0"/>
+            <StackPanel Grid.Row="1" Grid.Column="1" Margin="0,4">
+                <ComboBox ItemsSource="{Binding Modes}" SelectedItem="{Binding Mode}"
+                          ToolTip="Drive letter (rclone/WinFsp) or an on-demand folder (Windows Files On-Demand).">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding Converter={StaticResource ModeToText}}" Margin="0"/>
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+                <TextBlock Text="{Binding ModeDescription}" TextWrapping="Wrap" Margin="0,4,0,0"
+                           FontSize="11" Foreground="{StaticResource WC.Brush.TextSecondary}"/>
+            </StackPanel>
 
             <TextBlock Grid.Row="2" Grid.Column="0" Text="Bucket name *"/>
             <TextBox   Grid.Row="2" Grid.Column="1" Margin="0,4" Text="{Binding BucketName}"/>
