@@ -1,9 +1,20 @@
 # WasabiDrive
 
+[![Latest release](https://img.shields.io/github/v/release/RHC-Solutions/WasabiDrive?label=latest&sort=semver)](https://github.com/RHC-Solutions/WasabiDrive/releases/latest)
+
 Mount [Wasabi](https://wasabi.com) S3 buckets as native Windows drive letters. WasabiDrive is
 a WPF tray app that drives [rclone](https://rclone.org) (the mount engine) on top of
 [WinFsp](https://winfsp.dev) (the user-mode filesystem), with a GUI for credentials, multiple
 bucket→drive mappings, auto-mount at login, and cache tuning.
+
+## Download
+
+**[⬇ Download the latest version](https://github.com/RHC-Solutions/WasabiDrive/releases/latest/download/WasabiDrive-Setup.exe)**
+&nbsp;·&nbsp; [All releases](https://github.com/RHC-Solutions/WasabiDrive/releases)
+
+Run the installer (`WasabiDrive-Setup.exe`); it installs WinFsp automatically if it's missing.
+Windows 10/11 x64. Already installed? The app checks for updates on startup and via
+**About → Check for updates**.
 
 ## How it works
 

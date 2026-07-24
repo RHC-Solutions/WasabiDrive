@@ -52,6 +52,11 @@ $setup = Join-Path $root "installer\output\WasabiDrive-Setup-$Version.exe"
 if (-not (Test-Path $setup)) { throw "Installer not found at $setup" }
 Write-Host "Installer: $setup ($([math]::Round((Get-Item $setup).Length / 1MB, 1)) MB)"
 
+# A fixed-name copy so the README's "download latest" link
+# (releases/latest/download/WasabiDrive-Setup.exe) always resolves.
+$setupStable = Join-Path $root "installer\output\WasabiDrive-Setup.exe"
+Copy-Item $setup $setupStable -Force
+
 # Commit the version bump on the current branch.
 Write-Host "Committing version bump ..."
 git -C $root add 'src/WasabiDrive.App/WasabiDrive.App.csproj' 'installer/WasabiDrive.iss' 'src/WasabiDrive.App/app.manifest'
@@ -67,7 +72,7 @@ Write-Host "Pushing commit and creating GitHub release $tag ..."
 git -C $root push
 
 if (-not $Notes) { $Notes = "WasabiDrive $Version" }
-$ghArgs = @('release', 'create', $tag, $setup,
+$ghArgs = @('release', 'create', $tag, $setup, $setupStable,
             '--repo', $repo, '--title', "WasabiDrive $Version", '--notes', $Notes, '--target', 'main')
 if ($Prerelease) { $ghArgs += '--prerelease' }
 gh @ghArgs
