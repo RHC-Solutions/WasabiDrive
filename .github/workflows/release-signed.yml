@@ -88,7 +88,10 @@ jobs:
           path: to-sign\*
 
       - name: Sign with SignPath
-        uses: signpath/github-action-submit-signing-request@v1
+        # Pinned to an immutable commit SHA (v1.3) instead of the mutable "v1" tag so a compromised
+        # tag can't inject code into the signing job (which holds the SignPath API token). CodeQL:
+        # actions/unpinned-tag. Bump the SHA + comment together when upgrading.
+        uses: signpath/github-action-submit-signing-request@ced31329c0317e779dad2eec2a7c3bb46ea1343e # v1.3
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
