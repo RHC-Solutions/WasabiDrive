@@ -31,6 +31,9 @@ public sealed class MountManager : IAsyncDisposable
     /// <summary>How long to wait for the drive letter to appear before declaring failure.</summary>
     public TimeSpan MountTimeout { get; init; } = TimeSpan.FromSeconds(20);
 
+    /// <summary>Run mounts at DEBUG log level for troubleshooting.</summary>
+    public bool VerboseLogging { get; init; }
+
     public MountManager(string rcloneExePath)
     {
         if (string.IsNullOrWhiteSpace(rcloneExePath) || !File.Exists(rcloneExePath))
@@ -65,7 +68,8 @@ public sealed class MountManager : IAsyncDisposable
             throw new InvalidOperationException(
                 $"Drive {mapping.DriveTarget} is already in use by another volume.");
 
-        var session = new MountSession(mapping, credentials, new RcloneRunner(_rcloneExePath));
+        var session = new MountSession(mapping, credentials,
+            new RcloneRunner(_rcloneExePath) { VerboseLogging = VerboseLogging });
         _sessions[mapping.Id] = session;
 
         await StartSessionAsync(session, ct).ConfigureAwait(false);
@@ -130,7 +134,7 @@ public sealed class MountManager : IAsyncDisposable
         try
         {
             session.Runner.Dispose();
-            session.Runner = new RcloneRunner(_rcloneExePath);
+            session.Runner = new RcloneRunner(_rcloneExePath) { VerboseLogging = VerboseLogging };
             await StartSessionAsync(session, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception ex)

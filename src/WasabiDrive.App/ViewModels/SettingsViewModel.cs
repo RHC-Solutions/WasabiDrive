@@ -11,6 +11,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         StartAtLogin = settings.StartAtLogin;
         MinimizeToTray = settings.MinimizeToTray;
         AutoCheckForUpdates = settings.AutoCheckForUpdates;
+        VerboseLogging = settings.VerboseLogging;
         RcloneExePath = settings.RcloneExePath ?? string.Empty;
 
         DefaultCacheMode = settings.DefaultCache.CacheMode;
@@ -24,6 +25,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private bool _startAtLogin;
     [ObservableProperty] private bool _minimizeToTray;
     [ObservableProperty] private bool _autoCheckForUpdates;
+    [ObservableProperty] private bool _verboseLogging;
     [ObservableProperty] private string _rcloneExePath = string.Empty;
     [ObservableProperty] private VfsCacheMode _defaultCacheMode;
     [ObservableProperty] private int _defaultCacheMaxSizeMb;
@@ -36,6 +38,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         settings.StartAtLogin = StartAtLogin;
         settings.MinimizeToTray = MinimizeToTray;
         settings.AutoCheckForUpdates = AutoCheckForUpdates;
+        settings.VerboseLogging = VerboseLogging;
         settings.RcloneExePath = string.IsNullOrWhiteSpace(RcloneExePath) ? null : RcloneExePath.Trim();
         settings.DefaultCache.CacheMode = DefaultCacheMode;
         settings.DefaultCache.VfsCacheMaxSizeMb = DefaultCacheMaxSizeMb;

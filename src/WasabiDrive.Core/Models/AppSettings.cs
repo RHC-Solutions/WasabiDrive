@@ -17,4 +17,7 @@ public sealed class AppSettings
 
     /// <summary>Check GitHub for a newer release on startup and offer to update.</summary>
     public bool AutoCheckForUpdates { get; set; } = true;
+
+    /// <summary>Run rclone mounts at DEBUG log level (verbose) for troubleshooting.</summary>
+    public bool VerboseLogging { get; set; }
 }

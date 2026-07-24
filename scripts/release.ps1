@@ -33,7 +33,15 @@ function Update-File($path, $pattern, $replacement) {
     $text = Get-Content -Raw -LiteralPath $full
     $updated = [regex]::Replace($text, $pattern, $replacement)
     if ($updated -eq $text) { Write-Warning "No version match updated in $path" }
-    Set-Content -LiteralPath $full -Value $updated -NoNewline
+    # The repo may live under OneDrive / be open in an editor, which briefly locks files.
+    for ($attempt = 1; ; $attempt++) {
+        try { Set-Content -LiteralPath $full -Value $updated -NoNewline; break }
+        catch [System.IO.IOException] {
+            if ($attempt -ge 10) { throw }
+            Write-Host "  $path is locked (attempt $attempt) — retrying…"
+            Start-Sleep -Seconds 2
+        }
+    }
     Write-Host "  bumped $path"
 }
 

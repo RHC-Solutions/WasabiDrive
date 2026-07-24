@@ -20,6 +20,9 @@ public sealed class RcloneRunner : IDisposable
         _rcloneExePath = rcloneExePath;
     }
 
+    /// <summary>When true, the mount runs at DEBUG log level (verbose troubleshooting).</summary>
+    public bool VerboseLogging { get; set; }
+
     /// <summary>Raised for each line rclone writes to its log (stderr/stdout).</summary>
     public event Action<string>? LogLineReceived;
 
@@ -32,7 +35,7 @@ public sealed class RcloneRunner : IDisposable
     /// Translates a mapping's cache settings into an rclone <c>mount</c> argument list.
     /// Kept static and pure so it can be unit-tested without launching a process.
     /// </summary>
-    public static IReadOnlyList<string> BuildMountArguments(Mapping mapping)
+    public static IReadOnlyList<string> BuildMountArguments(Mapping mapping, bool verbose = false)
     {
         ArgumentNullException.ThrowIfNull(mapping);
         var c = mapping.Cache;
@@ -46,7 +49,7 @@ public sealed class RcloneRunner : IDisposable
             "--buffer-size", $"{Math.Max(0, c.BufferSizeMb)}Mi",
             "--volname", string.IsNullOrWhiteSpace(mapping.Name) ? mapping.BucketName : mapping.Name,
             "--no-console",
-            "--log-level", "INFO",
+            "--log-level", verbose ? "DEBUG" : "INFO",
         };
 
         if (c.CacheMode != VfsCacheMode.Off)
@@ -90,7 +93,7 @@ public sealed class RcloneRunner : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
-        foreach (var arg in BuildMountArguments(mapping))
+        foreach (var arg in BuildMountArguments(mapping, VerboseLogging))
             psi.ArgumentList.Add(arg);
         foreach (var kv in remoteEnv)
             psi.Environment[kv.Key] = kv.Value;

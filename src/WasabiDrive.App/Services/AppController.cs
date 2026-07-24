@@ -65,7 +65,7 @@ public sealed class AppController
         }
         else
         {
-            _mountManager = new MountManager(rclonePath);
+            _mountManager = new MountManager(rclonePath) { VerboseLogging = Settings.VerboseLogging };
             _mountManager.StatusChanged += OnStatusChanged;
             _mountManager.LogReceived += OnLogReceived;
         }
