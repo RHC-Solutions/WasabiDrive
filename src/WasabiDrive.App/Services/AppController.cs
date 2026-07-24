@@ -47,6 +47,18 @@ public sealed class AppController
 
     public event Action<string>? LogAppended;
 
+    /// <summary>Raised when the set of mappings changes (used to refresh the Explorer menu scope).</summary>
+    public event Action? MappingsChanged;
+
+    /// <summary>Local roots of all mappings (drive letters + on-demand folders) for shell scoping.</summary>
+    public IReadOnlyCollection<string> GetShellRoots() =>
+        Mappings.Select(m => m.Model.Mode == MappingMode.OnDemandFolder
+                ? OnDemandSyncManager.ResolveFolderPath(m.Model)
+                : m.Model.DriveTarget)
+            .Where(r => !string.IsNullOrWhiteSpace(r))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
     public void Initialize()
     {
         AppPaths.EnsureCreated();
@@ -94,6 +106,7 @@ public sealed class AppController
 
         _credentialStore.Set(mapping.Id, credentials);
         PersistMappings();
+        MappingsChanged?.Invoke();
     }
 
     public async Task DeleteMappingAsync(MappingViewModel vm)
@@ -104,6 +117,7 @@ public sealed class AppController
         _credentialStore.Remove(vm.Model.Id);
         Mappings.Remove(vm);
         PersistMappings();
+        MappingsChanged?.Invoke();
     }
 
     public async Task MountAsync(MappingViewModel vm, bool openFolder = true)
@@ -263,6 +277,7 @@ public sealed class AppController
                 existing.UpdateModel(mapping);
         }
         PersistMappings();
+        MappingsChanged?.Invoke();
     }
 
     /// <summary>Copies the default cache location onto every existing mapping and persists.</summary>

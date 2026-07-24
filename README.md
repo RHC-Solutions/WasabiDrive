@@ -96,6 +96,8 @@ The installer bundles `rclone.exe`, installs WinFsp if absent, and creates short
   Secret keys are never exported (they are DPAPI-encrypted and bound to the user+machine).
 - **In-app updates** — checks GitHub Releases on startup and from **About → Check for updates**;
   offers to download and run the latest installer.
+- **Explorer right-click** — a scoped **WasabiDrive** context menu on files/folders inside a mount
+  or on-demand folder: *Copy share link* (presigned URL), *Open in Wasabi console*, *Copy S3 path*.
 
 ## Notes
 

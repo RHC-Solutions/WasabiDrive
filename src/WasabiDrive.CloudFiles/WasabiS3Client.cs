@@ -118,5 +118,17 @@ public sealed class WasabiS3Client : IDisposable
         await DeleteObjectAsync(sourceKey, ct).ConfigureAwait(false);
     }
 
+    /// <summary>Creates a time-limited presigned GET URL for sharing an object.</summary>
+    public string GetPresignedUrl(string key, TimeSpan expiresIn)
+    {
+        return _s3.GetPreSignedURL(new GetPreSignedUrlRequest
+        {
+            BucketName = _bucket,
+            Key = key,
+            Verb = HttpVerb.GET,
+            Expires = DateTime.UtcNow.Add(expiresIn),
+        });
+    }
+
     public void Dispose() => _s3.Dispose();
 }

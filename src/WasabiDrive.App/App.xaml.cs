@@ -20,6 +20,15 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        // Explorer right-click verb: run the action standalone (no UI, no single-instance lock) and exit.
+        var shellIdx = Array.FindIndex(e.Args, a => a.Equals("--shell", StringComparison.OrdinalIgnoreCase));
+        if (shellIdx >= 0 && e.Args.Length >= shellIdx + 3)
+        {
+            ShellCommand.Run(e.Args[shellIdx + 1], e.Args[shellIdx + 2]);
+            Shutdown();
+            return;
+        }
+
         _singleInstanceMutex = new Mutex(initiallyOwned: true, MutexName, out var isNew);
         if (!isNew)
         {
@@ -42,6 +51,11 @@ public partial class App : Application
             onMountAuto: () => _ = _controller.MountAutoAsync(),
             onUnmountAll: () => _ = _controller.ShutdownAsync(),
             onExit: ExitApp);
+
+        // Register the scoped Explorer right-click menu, and keep it in sync with the mappings.
+        ShellMenu.Register(Environment.ProcessPath, _controller.GetShellRoots());
+        _controller.MappingsChanged += () =>
+            ShellMenu.Register(Environment.ProcessPath, _controller.GetShellRoots());
 
         if (!silentAutoMount)
             ShowMainWindow();
