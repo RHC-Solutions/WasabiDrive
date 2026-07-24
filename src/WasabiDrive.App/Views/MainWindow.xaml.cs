@@ -50,12 +50,27 @@ public partial class MainWindow : Window
     private void OnSettings(object sender, RoutedEventArgs e)
     {
         var settingsVm = new SettingsViewModel(_controller.Settings);
+        var oldCacheDir = _controller.Settings.DefaultCache.CacheDir;
         var win = new SettingsWindow(settingsVm, _controller) { Owner = this };
         if (win.ShowDialog() == true)
         {
             settingsVm.ApplyTo(_controller.Settings);
             _controller.SaveSettings();
             App.ApplyAutoMountSetting(_controller.Settings.StartAtLogin);
+
+            // The default cache location only affects NEW mappings; offer to apply it to existing ones.
+            var newCacheDir = _controller.Settings.DefaultCache.CacheDir;
+            if (!string.Equals(newCacheDir, oldCacheDir, StringComparison.OrdinalIgnoreCase)
+                && _controller.Mappings.Count > 0)
+            {
+                var shown = string.IsNullOrWhiteSpace(newCacheDir) ? "rclone default" : newCacheDir;
+                var choice = MessageBox.Show(this,
+                    $"Apply the cache location ({shown}) to all {_controller.Mappings.Count} existing mapping(s)?\n\n" +
+                    "They'll use it the next time you unmount and remount.",
+                    "Apply cache location", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                if (choice == MessageBoxResult.Yes)
+                    _controller.ApplyDefaultCacheDirToAllMappings();
+            }
         }
     }
 

@@ -265,6 +265,15 @@ public sealed class AppController
         PersistMappings();
     }
 
+    /// <summary>Copies the default cache location onto every existing mapping and persists.</summary>
+    public void ApplyDefaultCacheDirToAllMappings()
+    {
+        var dir = Settings.DefaultCache.CacheDir;
+        foreach (var vm in Mappings)
+            vm.Model.Cache.CacheDir = dir;
+        PersistMappings();
+    }
+
     public void SaveSettings() => _settingsStore.Save(Settings);
 
     public void PersistMappings() => _mappingStore.Save(Mappings.Select(m => m.Model));

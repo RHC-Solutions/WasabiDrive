@@ -1,0 +1,115 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Palette ported from Wasabi Commander (dark "Duplicate Finder" design system). -->
+    <Color x:Key="WC.Color.Accent">#FFE94560</Color>
+    <!-- ModernWpf reads SystemAccentColor for accent-tinted chrome; match the app accent. -->
+    <Color x:Key="SystemAccentColor">#FFE94560</Color>
+
+    <SolidColorBrush x:Key="WC.Brush.BgPrimary"   Color="#FF1A1A2E"/>
+    <SolidColorBrush x:Key="WC.Brush.BgSecondary" Color="#FF16213E"/>
+    <SolidColorBrush x:Key="WC.Brush.BgTertiary"  Color="#FF0F3460"/>
+    <SolidColorBrush x:Key="WC.Brush.TextPrimary"   Color="#FFEAEAEA"/>
+    <SolidColorBrush x:Key="WC.Brush.TextSecondary" Color="#FFA0A0A0"/>
+    <SolidColorBrush x:Key="WC.Brush.Accent"      Color="#FFE94560"/>
+    <SolidColorBrush x:Key="WC.Brush.AccentHover" Color="#FFFF6B6B"/>
+    <SolidColorBrush x:Key="WC.Brush.AccentMuted" Color="#33E94560"/>
+    <SolidColorBrush x:Key="WC.Brush.Success" Color="#FF4ADE80"/>
+    <SolidColorBrush x:Key="WC.Brush.Warning" Color="#FFFBBF24"/>
+    <SolidColorBrush x:Key="WC.Brush.Danger"  Color="#FFEF4444"/>
+    <SolidColorBrush x:Key="WC.Brush.Border"  Color="#FF2A2A4A"/>
+    <SolidColorBrush x:Key="WC.Brush.RowSelected" Color="#1AE94560"/>
+    <SolidColorBrush x:Key="WC.Brush.RowHover"    Color="#22243E"/>
+
+    <FontFamily x:Key="WC.Font.Sans">Segoe UI</FontFamily>
+    <FontFamily x:Key="WC.Font.Mono">Cascadia Mono, Consolas, Courier New</FontFamily>
+
+    <!-- Plain TextBlocks default to light text on the dark background. -->
+    <Style TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource WC.Brush.TextPrimary}"/>
+        <Setter Property="FontFamily" Value="{StaticResource WC.Font.Sans}"/>
+        <Setter Property="FontSize" Value="13"/>
+    </Style>
+
+    <!-- Base button: borderless, rounded, tertiary fill (matches WC.Button.Base). -->
+    <Style x:Key="WC.Button" TargetType="Button">
+        <Setter Property="Background" Value="{StaticResource WC.Brush.BgTertiary}"/>
+        <Setter Property="Foreground" Value="{StaticResource WC.Brush.TextPrimary}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="BorderBrush" Value="Transparent"/>
+        <Setter Property="Padding" Value="14,7"/>
+        <Setter Property="FontFamily" Value="{StaticResource WC.Font.Sans}"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="bd" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="6">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          Margin="{TemplateBinding Padding}"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource WC.Brush.Border}"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="bd" Property="Opacity" Value="0.85"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="bd" Property="Opacity" Value="0.5"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Make plain buttons use the base style by default. -->
+    <Style TargetType="Button" BasedOn="{StaticResource WC.Button}"/>
+
+    <Style x:Key="WC.Button.Accent" TargetType="Button" BasedOn="{StaticResource WC.Button}">
+        <Setter Property="Background" Value="{StaticResource WC.Brush.Accent}"/>
+        <Setter Property="Foreground" Value="White"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{StaticResource WC.Brush.AccentHover}"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="WC.Button.Danger" TargetType="Button" BasedOn="{StaticResource WC.Button}">
+        <Setter Property="Background" Value="{StaticResource WC.Brush.Danger}"/>
+        <Setter Property="Foreground" Value="White"/>
+    </Style>
+
+    <!-- Heading / subtitle text helpers. -->
+    <Style x:Key="WC.Heading" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource WC.Brush.TextPrimary}"/>
+        <Setter Property="FontFamily" Value="{StaticResource WC.Font.Sans}"/>
+        <Setter Property="FontSize" Value="18"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+    </Style>
+    <Style x:Key="WC.Subtitle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource WC.Brush.TextSecondary}"/>
+        <Setter Property="FontFamily" Value="{StaticResource WC.Font.Sans}"/>
+        <Setter Property="FontSize" Value="11"/>
+    </Style>
+
+    <!-- Accent tab bar used in window/dialog headers. -->
+    <Style x:Key="WC.AccentBar" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource WC.Brush.Accent}"/>
+        <Setter Property="Width" Value="4"/>
+        <Setter Property="CornerRadius" Value="2"/>
+    </Style>
+
+    <!-- Section/header/footer bar. -->
+    <Style x:Key="WC.Bar" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource WC.Brush.BgSecondary}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource WC.Brush.Border}"/>
+    </Style>
+
+</ResourceDictionary>

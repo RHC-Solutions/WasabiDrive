@@ -4,7 +4,10 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:conv="clr-namespace:WasabiDrive.App.Views"
+        xmlns:ui="http://schemas.modernwpf.com/2019"
         mc:Ignorable="d"
+        ui:WindowHelper.UseModernWindowStyle="True"
+        Background="{StaticResource WC.Brush.BgPrimary}"
         Title="{Binding Title}" Width="480" SizeToContent="Height" Icon="/Assets/wasabidrive.ico"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
         ShowInTaskbar="False">
@@ -13,6 +16,9 @@
         <Style TargetType="TextBlock">
             <Setter Property="VerticalAlignment" Value="Center"/>
             <Setter Property="Margin" Value="0,0,10,0"/>
+            <Setter Property="Foreground" Value="{StaticResource WC.Brush.TextPrimary}"/>
+            <Setter Property="FontFamily" Value="{StaticResource WC.Font.Sans}"/>
+            <Setter Property="FontSize" Value="13"/>
         </Style>
         <Style TargetType="Control" x:Key="Field">
             <Setter Property="Margin" Value="0,4"/>
@@ -107,7 +113,7 @@
         </Grid>
 
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
-            <Button Content="Save" Click="OnSave" IsDefault="True" Padding="18,6" Margin="0,0,8,0"/>
+            <Button Content="Save" Click="OnSave" IsDefault="True" Style="{StaticResource WC.Button.Accent}" Padding="18,6" Margin="0,0,8,0"/>
             <Button Content="Cancel" IsCancel="True" Padding="18,6"/>
         </StackPanel>
     </StackPanel>

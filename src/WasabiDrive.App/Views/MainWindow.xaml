@@ -3,60 +3,80 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:ui="http://schemas.modernwpf.com/2019"
         xmlns:conv="clr-namespace:WasabiDrive.App.Views"
         mc:Ignorable="d"
-        Title="WasabiDrive" Height="520" Width="860" MinWidth="640" MinHeight="380"
+        ui:WindowHelper.UseModernWindowStyle="True"
+        Title="WasabiDrive" Height="620" Width="900" MinWidth="680" MinHeight="440"
         Icon="/Assets/wasabidrive.ico"
+        Background="{StaticResource WC.Brush.BgPrimary}"
         WindowStartupLocation="CenterScreen">
     <Window.Resources>
         <conv:NullToBoolConverter x:Key="NullToBool"/>
         <conv:BoolToVisibilityConverter x:Key="BoolToVis"/>
     </Window.Resources>
-    <DockPanel Margin="12">
 
-        <!-- Toolbar -->
-        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
-            <Button Content="Add…" Click="OnAdd" Padding="14,6" Margin="0,0,8,0"/>
-            <Button Content="Edit…" Click="OnEdit" Padding="14,6" Margin="0,0,8,0"
-                    IsEnabled="{Binding SelectedMapping, Converter={StaticResource NullToBool}}"/>
-            <Button Content="Delete" Click="OnDelete" Padding="14,6" Margin="0,0,8,0"
-                    IsEnabled="{Binding SelectedMapping, Converter={StaticResource NullToBool}}"/>
-            <Button Content="Settings…" Click="OnSettings" Padding="14,6" Margin="0,0,8,0"/>
-            <Button Content="About…" Click="OnAbout" Padding="14,6"/>
-        </StackPanel>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*" MinHeight="120"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="200" MinHeight="90"/>
+        </Grid.RowDefinitions>
 
-        <!-- rclone warning banner -->
-        <Border DockPanel.Dock="Top" Background="#FFF3CD" BorderBrush="#FFE69C" BorderThickness="1"
-                Padding="10,6" Margin="0,0,0,10"
-                Visibility="{Binding HasRcloneWarning, Converter={StaticResource BoolToVis}}">
-            <TextBlock Text="{Binding RcloneWarning}" TextWrapping="Wrap" Foreground="#664D03"/>
+        <!-- Header -->
+        <Border Grid.Row="0" Style="{StaticResource WC.Bar}" BorderThickness="0,0,0,1" Padding="20,14">
+            <Grid>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Style="{StaticResource WC.AccentBar}" Height="26" Margin="0,0,12,0"/>
+                    <Image Source="/Assets/logo.png" Width="24" Height="24" Margin="0,0,10,0"
+                           RenderOptions.BitmapScalingMode="HighQuality"/>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="WasabiDrive" Style="{StaticResource WC.Heading}"/>
+                        <TextBlock Text="Mount Wasabi buckets as drives &amp; on-demand folders"
+                                   Style="{StaticResource WC.Subtitle}"/>
+                    </StackPanel>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <Button Content="+ Add" Click="OnAdd" Style="{StaticResource WC.Button.Accent}" Margin="0,0,8,0"/>
+                    <Button Content="Edit" Click="OnEdit" Margin="0,0,8,0"
+                            IsEnabled="{Binding SelectedMapping, Converter={StaticResource NullToBool}}"/>
+                    <Button Content="Delete" Click="OnDelete" Style="{StaticResource WC.Button.Danger}" Margin="0,0,8,0"
+                            IsEnabled="{Binding SelectedMapping, Converter={StaticResource NullToBool}}"/>
+                    <Button Content="Settings" Click="OnSettings" Margin="0,0,8,0"/>
+                    <Button Content="About" Click="OnAbout"/>
+                </StackPanel>
+            </Grid>
         </Border>
 
-        <!-- Log pane -->
-        <GroupBox DockPanel.Dock="Bottom" Header="Activity log" Height="150" Margin="0,10,0,0">
-            <TextBox Text="{Binding LogText, Mode=OneWay}" IsReadOnly="True"
-                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-                     FontFamily="Consolas" FontSize="11" TextWrapping="NoWrap"
-                     Background="#1E1E1E" Foreground="#DCDCDC"/>
-        </GroupBox>
+        <!-- rclone / WinFsp warning banner -->
+        <Border Grid.Row="1" Background="#33FBBF24" BorderBrush="{StaticResource WC.Brush.Warning}" BorderThickness="1"
+                Padding="12,8" Margin="16,12,16,0"
+                Visibility="{Binding HasRcloneWarning, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="{Binding RcloneWarning}" TextWrapping="Wrap" Foreground="{StaticResource WC.Brush.Warning}"/>
+        </Border>
 
         <!-- Mappings list -->
-        <ListView ItemsSource="{Binding Mappings}" SelectedItem="{Binding SelectedMapping}">
+        <ListView Grid.Row="2" Margin="16,12,16,0" Background="Transparent" BorderBrush="{StaticResource WC.Brush.Border}"
+                  ItemsSource="{Binding Mappings}" SelectedItem="{Binding SelectedMapping}">
             <ListView.View>
                 <GridView>
-                    <GridViewColumn Header="Name" Width="130" DisplayMemberBinding="{Binding Name}"/>
-                    <GridViewColumn Header="Bucket" Width="120" DisplayMemberBinding="{Binding BucketName}"/>
-                    <GridViewColumn Header="Mode" Width="80" DisplayMemberBinding="{Binding ModeText}"/>
-                    <GridViewColumn Header="Location" Width="150" DisplayMemberBinding="{Binding Location}"/>
+                    <GridViewColumn Header="Name" Width="140" DisplayMemberBinding="{Binding Name}"/>
+                    <GridViewColumn Header="Bucket" Width="130" DisplayMemberBinding="{Binding BucketName}"/>
+                    <GridViewColumn Header="Mode" Width="90" DisplayMemberBinding="{Binding ModeText}"/>
+                    <GridViewColumn Header="Location" Width="160" DisplayMemberBinding="{Binding Location}"/>
                     <GridViewColumn Header="Status" Width="100" DisplayMemberBinding="{Binding StateText}"/>
                     <GridViewColumn Header="" Width="170">
                         <GridViewColumn.CellTemplate>
                             <DataTemplate>
                                 <StackPanel Orientation="Horizontal">
                                     <Button Content="Mount" Command="{Binding MountCommand}"
-                                            Padding="10,3" Margin="0,0,6,0" MinWidth="70"/>
+                                            Style="{StaticResource WC.Button.Accent}"
+                                            Padding="10,3" Margin="0,0,6,0" MinWidth="72"/>
                                     <Button Content="Unmount" Command="{Binding UnmountCommand}"
-                                            Padding="10,3" MinWidth="70"/>
+                                            Padding="10,3" MinWidth="72"/>
                                 </StackPanel>
                             </DataTemplate>
                         </GridViewColumn.CellTemplate>
@@ -64,5 +84,27 @@
                 </GridView>
             </ListView.View>
         </ListView>
-    </DockPanel>
+
+        <!-- Drag handle to resize the activity log -->
+        <GridSplitter Grid.Row="3" Height="8" HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                      Background="Transparent" ResizeBehavior="PreviousAndNext" ResizeDirection="Rows"
+                      Margin="16,4"/>
+
+        <!-- Activity log -->
+        <Border Grid.Row="4" Style="{StaticResource WC.Bar}" BorderThickness="1" CornerRadius="8"
+                Margin="16,0,16,16">
+            <DockPanel>
+                <Border DockPanel.Dock="Top" Background="{StaticResource WC.Brush.BgTertiary}"
+                        CornerRadius="8,8,0,0" Padding="12,6">
+                    <TextBlock Text="Activity log" Foreground="{StaticResource WC.Brush.TextSecondary}"
+                               FontWeight="SemiBold" FontSize="12"/>
+                </Border>
+                <TextBox Text="{Binding LogText, Mode=OneWay}" IsReadOnly="True" Background="#FF141428"
+                         Foreground="#FFDCDCDC" BorderThickness="0"
+                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                         FontFamily="{StaticResource WC.Font.Mono}" FontSize="12" TextWrapping="NoWrap"
+                         Padding="10,6"/>
+            </DockPanel>
+        </Border>
+    </Grid>
 </Window>
