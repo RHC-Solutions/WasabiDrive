@@ -49,6 +49,11 @@ public sealed class RcloneRunner : IDisposable
             "--buffer-size", $"{Math.Max(0, c.BufferSizeMb)}Mi",
             "--volname", string.IsNullOrWhiteSpace(mapping.Name) ? mapping.BucketName : mapping.Name,
             "--no-console",
+            // Present W: as a network drive. Windows never uses a Recycle Bin on network drives,
+            // so deletes become real S3 deletes instead of a server-side copy into a hidden
+            // "$RECYCLE.BIN/" prefix in the bucket (which left "deleted" files/folders behind and
+            // kept costing storage). Also makes folder (Dir.Remove) deletes work.
+            "--network-mode",
             "--log-level", verbose ? "DEBUG" : "INFO",
         };
 

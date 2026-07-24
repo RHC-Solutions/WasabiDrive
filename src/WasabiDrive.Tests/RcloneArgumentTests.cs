@@ -38,6 +38,8 @@ public class RcloneArgumentTests
         Assert.Contains("--dir-cache-time 300s", joined);
         Assert.Contains("--buffer-size 16Mi", joined);
         Assert.Contains("--volname Backups", joined);
+        // Network-drive mode: no Windows Recycle Bin, so deletes are real S3 deletes.
+        Assert.Contains("--network-mode", joined);
     }
 
     [Fact]
