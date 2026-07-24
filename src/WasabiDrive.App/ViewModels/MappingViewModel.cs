@@ -2,6 +2,7 @@ using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using WasabiDrive.App.Services;
+using WasabiDrive.CloudFiles;
 using WasabiDrive.Core.Models;
 
 namespace WasabiDrive.App.ViewModels;
@@ -35,6 +36,13 @@ public sealed partial class MappingViewModel : ObservableObject
     public string DriveTarget => Model.DriveTarget;
     public string RegionCode => Model.RegionCode;
     public bool AutoMount => Model.AutoMount;
+
+    public string ModeText => Model.Mode == MappingMode.OnDemandFolder ? "On-demand" : "Drive";
+
+    /// <summary>Drive letter for drive mode, or the on-demand folder path.</summary>
+    public string Location => Model.Mode == MappingMode.OnDemandFolder
+        ? OnDemandSyncManager.ResolveFolderPath(Model)
+        : Model.DriveTarget;
 
     public bool IsMounted => State == MountState.Mounted;
     public bool IsBusy => State is MountState.Mounting or MountState.Unmounting;
@@ -89,5 +97,7 @@ public sealed partial class MappingViewModel : ObservableObject
         OnPropertyChanged(nameof(DriveTarget));
         OnPropertyChanged(nameof(RegionCode));
         OnPropertyChanged(nameof(AutoMount));
+        OnPropertyChanged(nameof(ModeText));
+        OnPropertyChanged(nameof(Location));
     }
 }

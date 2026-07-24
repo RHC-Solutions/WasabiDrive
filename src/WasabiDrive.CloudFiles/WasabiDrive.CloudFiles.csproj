@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>WasabiDrive.CloudFiles</RootNamespace>
+  </PropertyGroup>
+
+  <!-- 'generated' only exists when EmitCompilerGeneratedFiles is used for inspection;
+       exclude it so it never double-compiles with the live CsWin32 source generator. -->
+  <ItemGroup>
+    <Compile Remove="gen*\**\*.cs" />
+    <None Remove="gen*\**\*.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\WasabiDrive.Core\WasabiDrive.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AWSSDK.S3" Version="3.7.410.6" />
+    <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.183">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+</Project>

@@ -4,6 +4,10 @@ obj/
 [Bb]uild/
 installer/output/
 
+# CsWin32 inspection output (only created with EmitCompilerGeneratedFiles)
+generated/
+gen[0-9]*/
+
 # Bundled binaries (large; fetched by setup, not committed)
 third_party/rclone/rclone.exe
 third_party/winfsp/*.msi

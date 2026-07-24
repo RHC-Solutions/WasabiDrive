@@ -78,6 +78,13 @@ The installer bundles `rclone.exe`, installs WinFsp if absent, and creates short
 
 ## Features
 
+- **Two mapping modes (per bucket):**
+  - **Drive letter** — a virtual drive (e.g. `W:`) via rclone + WinFsp (the original mode).
+  - **Files On-Demand folder** — a normal folder backed by the **Windows Cloud Files API**, just
+    like OneDrive: files show in Explorer as placeholders, download only when opened, and support
+    the native **Status** column/overlays and the **"Always keep on this device" / "Free up space"**
+    right-click menu. Idle files are freed automatically (Storage Sense + a built-in policy using
+    the mapping's *cache max age*). One-way (read) in this release — local edits aren't uploaded yet.
 - **Cache tuning** — mode, max size (0 = unlimited; 1 TiB = `1048576` MiB), max age, and a
   configurable **cache location** (`--cache-dir`) so a large cache can live on a roomy drive.
   Defaults and per-mapping overrides are both supported.

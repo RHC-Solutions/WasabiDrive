@@ -20,6 +20,8 @@ public sealed partial class MappingEditViewModel : ObservableObject
         SubPath = m.SubPath ?? string.Empty;
         RegionCode = m.RegionCode;
         AutoMount = m.AutoMount;
+        Mode = m.Mode;
+        LocalFolderPath = m.LocalFolderPath ?? string.Empty;
 
         CacheMode = m.Cache.CacheMode;
         VfsCacheMaxSizeMb = m.Cache.VfsCacheMaxSizeMb;
@@ -43,7 +45,12 @@ public sealed partial class MappingEditViewModel : ObservableObject
     public IReadOnlyList<WasabiRegion> Regions => WasabiRegion.All;
     public IReadOnlyList<VfsCacheMode> CacheModes { get; } =
         Enum.GetValues<VfsCacheMode>();
+    public IReadOnlyList<MappingMode> Modes { get; } = Enum.GetValues<MappingMode>();
     public IReadOnlyList<string> AvailableDriveLetters { get; }
+
+    /// <summary>True when the mapping uses a virtual drive letter (controls which fields show).</summary>
+    public bool IsDriveLetterMode => Mode == MappingMode.DriveLetter;
+    public bool IsOnDemandMode => Mode == MappingMode.OnDemandFolder;
 
     [ObservableProperty] private string _name = string.Empty;
     [ObservableProperty] private string _bucketName = string.Empty;
@@ -51,6 +58,13 @@ public sealed partial class MappingEditViewModel : ObservableObject
     [ObservableProperty] private string _driveLetter = "W";
     [ObservableProperty] private string _regionCode = "us-east-1";
     [ObservableProperty] private bool _autoMount;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsDriveLetterMode))]
+    [NotifyPropertyChangedFor(nameof(IsOnDemandMode))]
+    private MappingMode _mode = MappingMode.DriveLetter;
+
+    [ObservableProperty] private string _localFolderPath = string.Empty;
 
     [ObservableProperty] private VfsCacheMode _cacheMode = VfsCacheMode.Full;
     [ObservableProperty] private int _vfsCacheMaxSizeMb = 10 * 1024;
@@ -67,7 +81,7 @@ public sealed partial class MappingEditViewModel : ObservableObject
     {
         if (string.IsNullOrWhiteSpace(BucketName))
             return "Bucket name is required.";
-        if (string.IsNullOrWhiteSpace(DriveLetter))
+        if (IsDriveLetterMode && string.IsNullOrWhiteSpace(DriveLetter))
             return "A drive letter is required.";
         if (WasabiRegion.FindByCode(RegionCode) is null)
             return "Please choose a valid region.";
@@ -85,6 +99,10 @@ public sealed partial class MappingEditViewModel : ObservableObject
         DriveLetter = DriveLetter.TrimEnd(':'),
         RegionCode = RegionCode,
         AutoMount = AutoMount,
+        Mode = Mode,
+        LocalFolderPath = IsOnDemandMode && !string.IsNullOrWhiteSpace(LocalFolderPath)
+            ? LocalFolderPath.Trim()
+            : null,
         Cache = new CacheSettings
         {
             CacheMode = CacheMode,

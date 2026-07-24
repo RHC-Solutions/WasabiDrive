@@ -16,6 +16,15 @@ public partial class MappingEditWindow : Window
         SecretBox.Password = vm.SecretAccessKey;
     }
 
+    private void OnBrowseFolder(object sender, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.OpenFolderDialog { Title = "Choose the on-demand folder location" };
+        if (!string.IsNullOrWhiteSpace(_vm.LocalFolderPath) && System.IO.Directory.Exists(_vm.LocalFolderPath))
+            dlg.InitialDirectory = _vm.LocalFolderPath;
+        if (dlg.ShowDialog(this) == true)
+            _vm.LocalFolderPath = dlg.FolderName;
+    }
+
     private void OnBrowseCacheDir(object sender, RoutedEventArgs e)
     {
         var dlg = new Microsoft.Win32.OpenFolderDialog { Title = "Choose cache location" };

@@ -6,7 +6,7 @@
 #define AppVersion "0.2.1"
 #define AppPublisher "RHC Solutions"
 #define AppPublisherUrl "https://rhcsolutions.com/"
-#define PublishDir "..\src\WasabiDrive.App\bin\Release\net8.0-windows\win-x64\publish"
+#define PublishDir "..\src\WasabiDrive.App\bin\Release\net8.0-windows10.0.19041.0\win-x64\publish"
 #define WinFspMsi "..\third_party\winfsp\winfsp.msi"
 #define AppIcon "..\src\WasabiDrive.App\Assets\wasabidrive.ico"
 

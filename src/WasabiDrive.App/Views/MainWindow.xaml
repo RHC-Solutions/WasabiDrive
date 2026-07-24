@@ -44,11 +44,11 @@
         <ListView ItemsSource="{Binding Mappings}" SelectedItem="{Binding SelectedMapping}">
             <ListView.View>
                 <GridView>
-                    <GridViewColumn Header="Name" Width="150" DisplayMemberBinding="{Binding Name}"/>
-                    <GridViewColumn Header="Bucket" Width="150" DisplayMemberBinding="{Binding BucketName}"/>
-                    <GridViewColumn Header="Drive" Width="60" DisplayMemberBinding="{Binding DriveTarget}"/>
-                    <GridViewColumn Header="Region" Width="110" DisplayMemberBinding="{Binding RegionCode}"/>
-                    <GridViewColumn Header="Status" Width="110" DisplayMemberBinding="{Binding StateText}"/>
+                    <GridViewColumn Header="Name" Width="130" DisplayMemberBinding="{Binding Name}"/>
+                    <GridViewColumn Header="Bucket" Width="120" DisplayMemberBinding="{Binding BucketName}"/>
+                    <GridViewColumn Header="Mode" Width="80" DisplayMemberBinding="{Binding ModeText}"/>
+                    <GridViewColumn Header="Location" Width="150" DisplayMemberBinding="{Binding Location}"/>
+                    <GridViewColumn Header="Status" Width="100" DisplayMemberBinding="{Binding StateText}"/>
                     <GridViewColumn Header="" Width="170">
                         <GridViewColumn.CellTemplate>
                             <DataTemplate>

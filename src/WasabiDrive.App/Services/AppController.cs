@@ -1,7 +1,9 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using WasabiDrive.App.ViewModels;
+using WasabiDrive.CloudFiles;
 using WasabiDrive.Core;
 using WasabiDrive.Core.Models;
 
@@ -17,6 +19,11 @@ public sealed class AppController
     private readonly MappingStore _mappingStore = new();
     private readonly CredentialStore _credentialStore = new();
     private readonly FileLogger _fileLogger = new();
+
+    // Active on-demand (Cloud Files) folders, keyed by mapping id.
+    private readonly Dictionary<Guid, OnDemandSyncManager> _onDemand = new();
+    private readonly object _onDemandGate = new();
+    private Timer? _dehydrationTimer;
 
     private MountManager? _mountManager;
 
@@ -68,6 +75,10 @@ public sealed class AppController
 
         if (StartupWarning is { } warning)
             _fileLogger.Log($"Startup warning: {warning}");
+
+        // Periodically free up space for idle on-demand files (Storage Sense also does this).
+        _dehydrationTimer = new Timer(_ => RunDehydrationSweep(), null,
+            TimeSpan.FromMinutes(30), TimeSpan.FromHours(1));
     }
 
     public WasabiCredentials? GetCredentials(Guid mappingId) => _credentialStore.Get(mappingId);
@@ -93,34 +104,137 @@ public sealed class AppController
         PersistMappings();
     }
 
-    public async Task MountAsync(MappingViewModel vm)
+    public async Task MountAsync(MappingViewModel vm, bool openFolder = true)
     {
-        if (_mountManager is null)
-            throw new InvalidOperationException(RcloneError ?? "rclone is unavailable.");
-
         var creds = _credentialStore.Get(vm.Model.Id)
             ?? throw new InvalidOperationException("No saved credentials for this mapping.");
+
+        if (vm.Model.Mode == MappingMode.OnDemandFolder)
+        {
+            await EnableOnDemandAsync(vm, creds, openFolder).ConfigureAwait(true);
+            return;
+        }
+
+        if (_mountManager is null)
+            throw new InvalidOperationException(RcloneError ?? "rclone is unavailable.");
         await _mountManager.MountAsync(vm.Model, creds).ConfigureAwait(true);
     }
 
     public async Task UnmountAsync(MappingViewModel vm)
     {
+        if (vm.Model.Mode == MappingMode.OnDemandFolder)
+        {
+            DisableOnDemand(vm);
+            return;
+        }
         if (_mountManager is null) return;
         await _mountManager.UnmountAsync(vm.Model.Id).ConfigureAwait(true);
     }
+
+    /// <summary>Local folder for an on-demand mapping (whether or not it is currently enabled).</summary>
+    public string GetOnDemandFolder(Mapping mapping) => OnDemandSyncManager.ResolveFolderPath(mapping);
+
+    private async Task EnableOnDemandAsync(MappingViewModel vm, WasabiCredentials creds, bool openFolder)
+    {
+        RunOnUi(() => vm.ApplyStatus(MountState.Mounting, "Preparing on-demand folder…"));
+        OnDemandSyncManager manager;
+        try
+        {
+            lock (_onDemandGate)
+            {
+                if (!_onDemand.TryGetValue(vm.Model.Id, out var existing))
+                {
+                    existing = new OnDemandSyncManager(vm.Model, creds, SafeLog);
+                    _onDemand[vm.Model.Id] = existing;
+                }
+                manager = existing;
+            }
+            await manager.EnableAsync().ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            lock (_onDemandGate) { _onDemand.Remove(vm.Model.Id); }
+            RunOnUi(() => vm.ApplyStatus(MountState.Error, ex.Message));
+            throw;
+        }
+
+        RunOnUi(() => vm.ApplyStatus(MountState.Mounted, $"On-demand at {manager.SyncRootPath}"));
+        if (openFolder) OpenFolder(manager.SyncRootPath);
+    }
+
+    private void DisableOnDemand(MappingViewModel vm)
+    {
+        OnDemandSyncManager? manager;
+        lock (_onDemandGate)
+        {
+            _onDemand.Remove(vm.Model.Id, out manager);
+        }
+        try { manager?.Dispose(); }
+        catch (Exception ex) { AppendLog($"Disabling on-demand folder failed: {ex.Message}"); }
+        RunOnUi(() => vm.ApplyStatus(MountState.Unmounted, null));
+    }
+
+    private void RunDehydrationSweep()
+    {
+        List<(OnDemandSyncManager Manager, TimeSpan MaxAge)> targets;
+        lock (_onDemandGate)
+        {
+            targets = _onDemand.Values
+                .Select(m => (m, GetMaxAge(m)))
+                .ToList();
+        }
+        foreach (var (manager, maxAge) in targets)
+        {
+            try { manager.DehydrateIdle(maxAge); }
+            catch (Exception ex) { AppendLog($"Dehydration sweep failed: {ex.Message}"); }
+        }
+
+        TimeSpan GetMaxAge(OnDemandSyncManager manager)
+        {
+            var mapping = Mappings.FirstOrDefault(v =>
+                string.Equals(GetOnDemandFolder(v.Model), manager.SyncRootPath, StringComparison.OrdinalIgnoreCase));
+            var age = mapping?.Model.Cache.VfsCacheMaxAge ?? TimeSpan.FromHours(24);
+            return age <= TimeSpan.Zero ? TimeSpan.FromHours(24) : age;
+        }
+    }
+
+    private void OpenFolder(string path)
+    {
+        try
+        {
+            Directory.CreateDirectory(path);
+            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+        }
+        catch (Exception ex) { AppendLog($"Could not open folder '{path}': {ex.Message}"); }
+    }
+
+    /// <summary>Thread-safe log entry point for the on-demand engine (marshals to the UI thread).</summary>
+    private void SafeLog(string line) => RunOnUi(() => AppendLog(line));
 
     /// <summary>Mounts every mapping flagged <see cref="Mapping.AutoMount"/>. Used at logon.</summary>
     public async Task MountAutoAsync()
     {
         foreach (var vm in Mappings.Where(m => m.Model.AutoMount))
         {
-            try { await MountAsync(vm).ConfigureAwait(true); }
+            try { await MountAsync(vm, openFolder: false).ConfigureAwait(true); }
             catch (Exception ex) { AppendLog($"Auto-mount of {vm.DriveTarget} failed: {ex.Message}"); }
         }
     }
 
     public async Task ShutdownAsync()
     {
+        if (_dehydrationTimer is not null)
+            await _dehydrationTimer.DisposeAsync().ConfigureAwait(false);
+
+        lock (_onDemandGate)
+        {
+            foreach (var manager in _onDemand.Values)
+            {
+                try { manager.Dispose(); } catch { /* best-effort */ }
+            }
+            _onDemand.Clear();
+        }
+
         if (_mountManager is not null)
             await _mountManager.UnmountAllAsync().ConfigureAwait(false);
         _fileLogger.Log("--- WasabiDrive shutting down ---");
