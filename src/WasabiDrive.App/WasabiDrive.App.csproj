@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>WasabiDrive</AssemblyName>
+    <RootNamespace>WasabiDrive.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Product>WasabiDrive</Product>
+    <Version>0.1.0</Version>
+    <Company>RHC Solutions</Company>
+    <Authors>RHC Solutions</Authors>
+    <Copyright>© RHC Solutions. https://rhcsolutions.com/</Copyright>
+    <PackageProjectUrl>https://rhcsolutions.com/</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/RHC-Solutions/WasabiDrive</RepositoryUrl>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\WasabiDrive.Core\WasabiDrive.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="Hardcodet.NotifyIcon.Wpf" Version="2.0.1" />
+  </ItemGroup>
+
+  <!-- Bundle rclone.exe next to the app so AppPaths.ResolveRcloneExe finds it at runtime. -->
+  <ItemGroup>
+    <Content Include="..\..\third_party\rclone\rclone.exe" Link="rclone.exe" Condition="Exists('..\..\third_party\rclone\rclone.exe')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

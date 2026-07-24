@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/WasabiDrive.App/WasabiDrive.App.csproj" />
+    <Project Path="src/WasabiDrive.Core/WasabiDrive.Core.csproj" />
+    <Project Path="src/WasabiDrive.Tests/WasabiDrive.Tests.csproj" />
+  </Folder>
+</Solution>

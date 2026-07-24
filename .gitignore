@@ -1,0 +1,13 @@
+# Build output
+bin/
+obj/
+[Bb]uild/
+installer/output/
+
+# Bundled binaries (large; fetched by setup, not committed)
+third_party/rclone/rclone.exe
+third_party/winfsp/*.msi
+
+# User/IDE
+.vs/
+*.user
