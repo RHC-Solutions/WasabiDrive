@@ -4,7 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="Settings" Width="520" SizeToContent="Height"
+        Title="Settings" Width="520" SizeToContent="Height" Icon="/Assets/wasabidrive.ico"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False">
     <StackPanel Margin="16">
         <CheckBox Content="Start WasabiDrive at login and auto-mount flagged drives"
@@ -52,6 +52,7 @@
         <StackPanel Orientation="Horizontal">
             <Button Content="Export…" Click="OnExport" Padding="14,6" Margin="0,0,8,0"/>
             <Button Content="Import…" Click="OnImport" Padding="14,6"/>
+            <Button Content="Open logs folder" Click="OnOpenLogs" Padding="14,6" Margin="8,0,0,0"/>
             <Button Content="About…" Click="OnAbout" Padding="14,6" Margin="8,0,0,0"/>
         </StackPanel>
 

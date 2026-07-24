@@ -9,6 +9,7 @@
     <AssemblyName>WasabiDrive</AssemblyName>
     <RootNamespace>WasabiDrive.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\wasabidrive.ico</ApplicationIcon>
     <Product>WasabiDrive</Product>
     <Version>0.1.0</Version>
     <Company>RHC Solutions</Company>
@@ -20,6 +21,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\WasabiDrive.Core\WasabiDrive.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\wasabidrive.ico" />
+    <Resource Include="Assets\logo.png" />
   </ItemGroup>
 
   <ItemGroup>

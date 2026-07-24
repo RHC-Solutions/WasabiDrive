@@ -34,6 +34,12 @@ public partial class SettingsWindow : Window
     private void OnAbout(object sender, RoutedEventArgs e) =>
         new AboutWindow { Owner = this }.ShowDialog();
 
+    private void OnOpenLogs(object sender, RoutedEventArgs e)
+    {
+        System.IO.Directory.CreateDirectory(_controller.LogsDirectory);
+        UpdateCoordinator.OpenUrl(_controller.LogsDirectory);
+    }
+
     private void OnExport(object sender, RoutedEventArgs e)
     {
         var dlg = new SaveFileDialog

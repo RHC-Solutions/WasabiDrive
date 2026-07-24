@@ -29,6 +29,27 @@ public class UpdateAndPortabilityTests
         Assert.Null(UpdateService.ParseVersion(tag));
     }
 
+    [Fact]
+    public void FileLogger_WritesDatedFileWithTimestampedLine()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"wd-logs-{Guid.NewGuid():N}");
+        try
+        {
+            using (var logger = new FileLogger(dir))
+            {
+                logger.Log("hello world");
+            }
+
+            var expected = Path.Combine(dir, $"wasabidrive-{DateTime.Now:yyyy-MM-dd}.log");
+            Assert.True(File.Exists(expected), $"expected log file {expected}");
+            Assert.Contains("hello world", File.ReadAllText(expected));
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        }
+    }
+
     [Theory]
     [InlineData(".json")]
     [InlineData(".xml")]

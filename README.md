@@ -20,7 +20,7 @@ on a command line. All config lives under `%LOCALAPPDATA%\WasabiDrive\`:
 | `mappings.json` | bucket→drive mappings (no secrets) |
 | `settings.json` | app settings (cache defaults, start-at-login) |
 | `credentials.dat` | Wasabi keys, encrypted with Windows DPAPI (per-user) |
-| `logs/` | reserved for log files |
+| `logs/` | daily activity logs (`wasabidrive-YYYY-MM-DD.log`, 30-day retention) |
 
 ## Prerequisites
 

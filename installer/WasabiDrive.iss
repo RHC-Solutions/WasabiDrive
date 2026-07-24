@@ -8,6 +8,7 @@
 #define AppPublisherUrl "https://rhcsolutions.com/"
 #define PublishDir "..\src\WasabiDrive.App\bin\Release\net8.0-windows\win-x64\publish"
 #define WinFspMsi "..\third_party\winfsp\winfsp.msi"
+#define AppIcon "..\src\WasabiDrive.App\Assets\wasabidrive.ico"
 
 [Setup]
 AppId={{5F3B8C2A-7E1D-4C6A-9B0E-WASABIDRIVE01}
@@ -22,6 +23,8 @@ DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 OutputDir=.\output
 OutputBaseFilename=WasabiDrive-Setup-{#AppVersion}
+SetupIconFile={#AppIcon}
+UninstallDisplayIcon={app}\WasabiDrive.exe
 Compression=lzma2
 SolidCompression=yes
 ; Per-user install (no elevation) keeps rclone mounts in the user session; WinFsp still needs admin.

@@ -4,11 +4,17 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="About WasabiDrive" Width="420" SizeToContent="Height"
+        Title="About WasabiDrive" Width="420" SizeToContent="Height" Icon="/Assets/wasabidrive.ico"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False">
     <StackPanel Margin="20">
-        <TextBlock Text="WasabiDrive" FontSize="20" FontWeight="Bold"/>
-        <TextBlock x:Name="VersionText" Margin="0,4,0,0" Foreground="#555"/>
+        <StackPanel Orientation="Horizontal">
+            <Image Source="/Assets/logo.png" Width="48" Height="48" Margin="0,0,12,0"
+                   VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality"/>
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock Text="WasabiDrive" FontSize="20" FontWeight="Bold"/>
+                <TextBlock x:Name="VersionText" Margin="0,2,0,0" Foreground="#555"/>
+            </StackPanel>
+        </StackPanel>
 
         <TextBlock Margin="0,14,0,0" TextWrapping="Wrap"
                    Text="Mount Wasabi S3 buckets as native Windows drive letters."/>

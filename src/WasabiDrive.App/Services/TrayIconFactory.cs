@@ -37,20 +37,16 @@ internal static class TrayIconFactory
         return item;
     }
 
-    /// <summary>Draws a simple teal "W" tray icon so no binary asset needs to ship in v1.</summary>
+    /// <summary>Loads the RHC Solutions app icon (Assets\wasabidrive.ico) shipped as a WPF resource.</summary>
     private static Icon BuildIcon()
     {
-        using var bmp = new Bitmap(32, 32);
-        using (var g = Graphics.FromImage(bmp))
+        var uri = new Uri("pack://application:,,,/Assets/wasabidrive.ico", UriKind.Absolute);
+        var info = System.Windows.Application.GetResourceStream(uri);
+        if (info is not null)
         {
-            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            using var bg = new SolidBrush(Color.FromArgb(0, 150, 136)); // teal
-            g.FillRectangle(bg, 0, 0, 32, 32);
-            using var font = new Font("Segoe UI", 16, System.Drawing.FontStyle.Bold, GraphicsUnit.Pixel);
-            using var fg = new SolidBrush(Color.White);
-            var fmt = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-            g.DrawString("W", font, fg, new RectangleF(0, 0, 32, 32), fmt);
+            using var stream = info.Stream;
+            return new Icon(stream, new System.Drawing.Size(32, 32));
         }
-        return Icon.FromHandle(bmp.GetHicon());
+        return SystemIcons.Application;
     }
 }

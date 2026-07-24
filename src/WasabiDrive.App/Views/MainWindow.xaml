@@ -6,6 +6,7 @@
         xmlns:conv="clr-namespace:WasabiDrive.App.Views"
         mc:Ignorable="d"
         Title="WasabiDrive" Height="520" Width="860" MinWidth="640" MinHeight="380"
+        Icon="/Assets/wasabidrive.ico"
         WindowStartupLocation="CenterScreen">
     <Window.Resources>
         <conv:NullToBoolConverter x:Key="NullToBool"/>

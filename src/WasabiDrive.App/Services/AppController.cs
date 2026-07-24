@@ -16,8 +16,12 @@ public sealed class AppController
     private readonly SettingsStore _settingsStore = new();
     private readonly MappingStore _mappingStore = new();
     private readonly CredentialStore _credentialStore = new();
+    private readonly FileLogger _fileLogger = new();
 
     private MountManager? _mountManager;
+
+    /// <summary>Folder that holds the daily log files.</summary>
+    public string LogsDirectory => AppPaths.LogsDir;
 
     public AppSettings Settings { get; private set; } = new();
     public ObservableCollection<MappingViewModel> Mappings { get; } = new();
@@ -42,6 +46,8 @@ public sealed class AppController
         Settings = _settingsStore.Load();
         _credentialStore.Load();
 
+        _fileLogger.Log($"--- WasabiDrive {AppInfo.CurrentVersionString} started ---");
+
         if (!WinFspDetector.IsInstalled())
             WinFspError = "WinFsp is not installed — mounting will fail until it is installed.";
 
@@ -59,6 +65,9 @@ public sealed class AppController
 
         foreach (var mapping in _mappingStore.Load())
             Mappings.Add(new MappingViewModel(this, mapping));
+
+        if (StartupWarning is { } warning)
+            _fileLogger.Log($"Startup warning: {warning}");
     }
 
     public WasabiCredentials? GetCredentials(Guid mappingId) => _credentialStore.Get(mappingId);
@@ -114,6 +123,8 @@ public sealed class AppController
     {
         if (_mountManager is not null)
             await _mountManager.UnmountAllAsync().ConfigureAwait(false);
+        _fileLogger.Log("--- WasabiDrive shutting down ---");
+        _fileLogger.Dispose();
     }
 
     /// <summary>
@@ -154,7 +165,11 @@ public sealed class AppController
     private void OnLogReceived(object? sender, MountLogEventArgs e) =>
         RunOnUi(() => AppendLog(e.Line));
 
-    private void AppendLog(string line) => LogAppended?.Invoke(line);
+    private void AppendLog(string line)
+    {
+        _fileLogger.Log(line);
+        LogAppended?.Invoke(line);
+    }
 
     private static void RunOnUi(Action action)
     {
