@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using WasabiDrive.Core.Models;
 
 namespace WasabiDrive.Core;
@@ -97,6 +98,11 @@ public sealed class RcloneRunner : IDisposable
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            // rclone writes its logs as UTF-8. Without forcing UTF-8 here, .NET decodes the streams
+            // with the console's default code page (e.g. Windows-1252), which turns non-ASCII names
+            // (Cyrillic, Hebrew, …) into mojibake like "ÐÐ¾Ð²Ð°Ñ Ð¿Ð°Ð¿ÐºÐ°" in the log window.
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
         };
         foreach (var arg in BuildMountArguments(mapping, VerboseLogging))
             psi.ArgumentList.Add(arg);
