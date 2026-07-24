@@ -39,9 +39,14 @@ public sealed class CacheSettings
         set => VfsCacheMaxAge = TimeSpan.FromSeconds(value);
     }
 
-    /// <summary>How long directory listings are cached before re-reading from Wasabi.</summary>
+    /// <summary>
+    /// How long directory listings are cached before re-reading from Wasabi. Wasabi/S3 cannot push
+    /// change notifications, so changes made by other tools (the Wasabi console, Wasabi Commander)
+    /// only appear on the drive after this interval. Kept short (1 min) so external changes surface
+    /// quickly; raise it to cut S3 LIST requests if you don't edit the bucket elsewhere.
+    /// </summary>
     [XmlIgnore]
-    public TimeSpan DirCacheTime { get; set; } = TimeSpan.FromMinutes(5);
+    public TimeSpan DirCacheTime { get; set; } = TimeSpan.FromMinutes(1);
 
     /// <summary>XML-serialization surrogate for <see cref="DirCacheTime"/>.</summary>
     [JsonIgnore]

@@ -38,6 +38,12 @@ public static class RcloneConfigWriter
             [prefix + "ENDPOINT"] = region.Endpoint,
             [prefix + "ACCESS_KEY_ID"] = credentials.AccessKeyId,
             [prefix + "SECRET_ACCESS_KEY"] = credentials.SecretAccessKey,
+            // S3 has no real directories. Without this, an empty folder created on the drive lives
+            // only in rclone's memory (no bucket object) — so it's invisible to the Wasabi console
+            // and other tools, and vanishes on remount; and deleting an empty folder can leave a
+            // stale marker behind. With directory markers, rclone writes/removes a 0-byte "folder/"
+            // object for empty directories, keeping the drive and the bucket consistent.
+            [prefix + "DIRECTORY_MARKERS"] = "true",
         };
     }
 }
