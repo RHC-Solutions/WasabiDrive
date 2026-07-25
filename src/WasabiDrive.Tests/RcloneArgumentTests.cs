@@ -43,6 +43,84 @@ public class RcloneArgumentTests
     }
 
     [Fact]
+    public void BuildMountArguments_IncludesThroughputFlags()
+    {
+        var joined = string.Join(" ", RcloneRunner.BuildMountArguments(SampleMapping()));
+
+        // Reads: parallel range GETs, rclone's recommended shape for S3.
+        Assert.Contains("--vfs-read-chunk-streams 16", joined);
+        Assert.Contains("--vfs-read-chunk-size 4Mi", joined);
+        Assert.Contains("--vfs-read-ahead 128Mi", joined);
+        // Writes: parallel files and parallel chunks per file.
+        Assert.Contains("--transfers 8", joined);
+        Assert.Contains("--s3-upload-concurrency 4", joined);
+        Assert.Contains("--s3-chunk-size 16Mi", joined);
+        // Request-count savings.
+        Assert.Contains("--use-server-modtime", joined);
+        Assert.Contains("--vfs-fast-fingerprint", joined);
+    }
+
+    [Fact]
+    public void BuildMountArguments_ZeroThroughputValues_OmitFlags()
+    {
+        var mapping = SampleMapping();
+        mapping.Cache.ReadChunkStreams = 0;
+        mapping.Cache.ReadChunkSizeMb = 0;
+        mapping.Cache.ReadAheadMb = 0;
+        mapping.Cache.Transfers = 0;
+        mapping.Cache.UploadConcurrency = 0;
+        mapping.Cache.UploadChunkSizeMb = 0;
+        mapping.Cache.UseServerModTime = false;
+        mapping.Cache.FastFingerprint = false;
+
+        var joined = string.Join(" ", RcloneRunner.BuildMountArguments(mapping));
+
+        Assert.DoesNotContain("--vfs-read-chunk-streams", joined);
+        Assert.DoesNotContain("--vfs-read-chunk-size", joined);
+        Assert.DoesNotContain("--vfs-read-ahead", joined);
+        Assert.DoesNotContain("--transfers", joined);
+        Assert.DoesNotContain("--s3-upload-concurrency", joined);
+        Assert.DoesNotContain("--s3-chunk-size", joined);
+        Assert.DoesNotContain("--use-server-modtime", joined);
+        Assert.DoesNotContain("--vfs-fast-fingerprint", joined);
+    }
+
+    [Fact]
+    public void BuildMountArguments_ReadAhead_RequiresFullCacheMode()
+    {
+        var mapping = SampleMapping();
+        mapping.Cache.CacheMode = VfsCacheMode.Writes;
+
+        var joined = string.Join(" ", RcloneRunner.BuildMountArguments(mapping));
+
+        // --vfs-read-ahead only has an effect with cache-mode full.
+        Assert.DoesNotContain("--vfs-read-ahead", joined);
+        Assert.Contains("--vfs-read-chunk-streams", joined);
+    }
+
+    [Fact]
+    public void Clone_CopiesThroughputSettings()
+    {
+        var original = new CacheSettings
+        {
+            ReadAheadMb = 1, ReadChunkStreams = 2, ReadChunkSizeMb = 3,
+            Transfers = 4, UploadConcurrency = 5, UploadChunkSizeMb = 6,
+            UseServerModTime = false, FastFingerprint = false,
+        };
+
+        var copy = original.Clone();
+
+        Assert.Equal(1, copy.ReadAheadMb);
+        Assert.Equal(2, copy.ReadChunkStreams);
+        Assert.Equal(3, copy.ReadChunkSizeMb);
+        Assert.Equal(4, copy.Transfers);
+        Assert.Equal(5, copy.UploadConcurrency);
+        Assert.Equal(6, copy.UploadChunkSizeMb);
+        Assert.False(copy.UseServerModTime);
+        Assert.False(copy.FastFingerprint);
+    }
+
+    [Fact]
     public void BuildMountArguments_CacheOff_OmitsCacheSizeAndAge()
     {
         var mapping = SampleMapping();

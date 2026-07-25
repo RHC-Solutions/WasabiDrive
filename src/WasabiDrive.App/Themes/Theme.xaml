@@ -112,4 +112,46 @@
         <Setter Property="BorderBrush" Value="{StaticResource WC.Brush.Border}"/>
     </Style>
 
+    <!--
+        Mapping-list row. ModernWpf's stock ListViewItem paints selection with a light accent-tinted
+        fill designed for dark text, but every cell here is a TextBlock using the light TextPrimary
+        brush — so a selected row rendered as light-on-light and became unreadable. Retemplating
+        (rather than overriding ModernWpf's internal resource keys) keeps the text brush untouched
+        and uses the subtle RowSelected / RowHover tints the palette already defines for this.
+    -->
+    <Style x:Key="WC.MappingRow" TargetType="ListViewItem">
+        <Setter Property="Foreground" Value="{StaticResource WC.Brush.TextPrimary}"/>
+        <Setter Property="FontFamily" Value="{StaticResource WC.Font.Sans}"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="Padding" Value="0,7"/>
+        <Setter Property="SnapsToDevicePixels" Value="True"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ListViewItem">
+                    <Border x:Name="bd" Background="Transparent"
+                            BorderBrush="{StaticResource WC.Brush.Border}"
+                            BorderThickness="0,0,0,1"
+                            Padding="{TemplateBinding Padding}">
+                        <!-- GridViewRowPresenter is what lays the cells out into the GridView's
+                             columns; without it a retemplated row renders as a single blob. -->
+                        <GridViewRowPresenter
+                            Content="{TemplateBinding Content}"
+                            Columns="{Binding View.Columns, RelativeSource={RelativeSource AncestorType={x:Type ListView}}}"
+                            VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="{StaticResource WC.Brush.RowHover}"/>
+                        </Trigger>
+                        <!-- Selection last so it wins over hover when both apply. -->
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="{StaticResource WC.Brush.RowSelected}"/>
+                            <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource WC.Brush.Accent}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
 </ResourceDictionary>

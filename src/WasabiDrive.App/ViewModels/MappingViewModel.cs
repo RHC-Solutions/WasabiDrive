@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -77,6 +78,33 @@ public sealed partial class MappingViewModel : ObservableObject
         catch (Exception ex)
         {
             MessageBox.Show(ex.Message, "Unmount failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    /// <summary>Opens the drive or on-demand folder in Explorer.</summary>
+    [RelayCommand]
+    private void OpenInExplorer()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo("explorer.exe", Location) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Could not open {Location}: {ex.Message}",
+                "WasabiDrive", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    /// <summary>Copies the drive letter / folder path so it can be pasted elsewhere.</summary>
+    [RelayCommand]
+    private void CopyPath()
+    {
+        try { Clipboard.SetText(Location); }
+        catch (Exception ex)
+        {
+            // The clipboard can be locked by another process; not worth interrupting the user for.
+            StatusMessage = $"Could not copy path: {ex.Message}";
         }
     }
 

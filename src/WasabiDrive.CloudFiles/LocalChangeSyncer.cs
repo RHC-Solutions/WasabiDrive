@@ -14,6 +14,16 @@ internal sealed class LocalChangeSyncer : IDisposable
     private const int DebounceMs = 1500;
     private const int IgnoreSeconds = 20;
 
+    /// <summary>
+    /// How many files upload at once. Dropping a folder in used to fan out one unbounded task per
+    /// file, so a thousand files meant a thousand simultaneous transfers competing for the link;
+    /// a bounded queue finishes the same work sooner and keeps memory predictable.
+    /// </summary>
+    private const int MaxConcurrentUploads = 8;
+
+    /// <summary>How many server-side moves run at once when a folder is renamed.</summary>
+    private const int MaxConcurrentMoves = 8;
+
     private readonly string _syncRoot;
     private readonly string _prefix;
     private readonly WasabiS3Client _s3;
@@ -23,6 +33,7 @@ internal sealed class LocalChangeSyncer : IDisposable
 
     private readonly ConcurrentDictionary<string, DateTime> _ignoreUntil = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, byte> _pending = new(StringComparer.OrdinalIgnoreCase);
+    private readonly SemaphoreSlim _uploadGate = new(MaxConcurrentUploads, MaxConcurrentUploads);
     private readonly Timer _debounce;
     private FileSystemWatcher? _watcher;
 
@@ -94,7 +105,15 @@ internal sealed class LocalChangeSyncer : IDisposable
         var paths = _pending.Keys.ToArray();
         foreach (var p in paths) _pending.TryRemove(p, out _);
         foreach (var path in paths)
-            _ = Task.Run(() => UploadIfNeededAsync(path));
+            _ = Task.Run(() => UploadGatedAsync(path));
+    }
+
+    /// <summary>Runs one upload, waiting its turn so only <see cref="MaxConcurrentUploads"/> are in flight.</summary>
+    private async Task UploadGatedAsync(string path)
+    {
+        await _uploadGate.WaitAsync().ConfigureAwait(false);
+        try { await UploadIfNeededAsync(path).ConfigureAwait(false); }
+        finally { _uploadGate.Release(); }
     }
 
     private async Task UploadIfNeededAsync(string path)
@@ -150,16 +169,30 @@ internal sealed class LocalChangeSyncer : IDisposable
 
         _ = Task.Run(async () =>
         {
-            foreach (var k in keysToDelete.Distinct())
+            // Batched: deleting a folder of 1000 files is one request instead of 1000 round trips.
+            try
             {
-                try
-                {
-                    await S3Retry.RunAsync(() => _s3.DeleteObjectAsync(k), _log).ConfigureAwait(false);
+                WasabiS3Client.DeleteResult? result = null;
+                await S3Retry.RunAsync(
+                    async () => result = await _s3.DeleteObjectsAsync(keysToDelete).ConfigureAwait(false),
+                    _log).ConfigureAwait(false);
+                if (result is null) return;
+
+                // Only forget the keys that actually went; the rest stay tracked so they aren't
+                // silently orphaned in the bucket.
+                foreach (var k in result.Deleted)
                     _state.Remove(k);
-                    _log?.Invoke($"Deleted {k}");
-                }
-                catch (Exception ex) { _log?.Invoke($"Delete of '{k}' failed: {ex.Message}"); }
+
+                if (result.Deleted.Count == 1)
+                    _log?.Invoke($"Deleted {result.Deleted[0]}");
+                else if (result.Deleted.Count > 1)
+                    _log?.Invoke($"Deleted {result.Deleted.Count} objects under {key}");
+
+                if (result.Failed.Count > 0)
+                    _log?.Invoke($"Delete failed for {result.Failed.Count} object(s) under {key}: " +
+                                 string.Join(", ", result.Failed.Take(5)));
             }
+            catch (Exception ex) { _log?.Invoke($"Delete of '{key}' failed: {ex.Message}"); }
         });
     }
 
@@ -178,18 +211,24 @@ internal sealed class LocalChangeSyncer : IDisposable
 
         _ = Task.Run(async () =>
         {
-            foreach (var (from, to) in moves)
-            {
-                try
+            // S3 has no rename, so each move is a server-side copy + delete. They're independent,
+            // so run a bounded batch of them at once rather than one at a time.
+            await Parallel.ForEachAsync(
+                moves,
+                new ParallelOptions { MaxDegreeOfParallelism = MaxConcurrentMoves },
+                async (move, _) =>
                 {
-                    await S3Retry.RunAsync(() => _s3.MoveObjectAsync(from, to), _log).ConfigureAwait(false);
-                    var known = _state.Get(from);
-                    _state.Remove(from);
-                    if (known is not null) { known.Key = to; _state.Set(known); }
-                    _log?.Invoke($"Renamed {from} -> {to}");
-                }
-                catch (Exception ex) { _log?.Invoke($"Rename '{from}' failed: {ex.Message}"); }
-            }
+                    var (from, to) = move;
+                    try
+                    {
+                        await S3Retry.RunAsync(() => _s3.MoveObjectAsync(from, to), _log).ConfigureAwait(false);
+                        var known = _state.Get(from);
+                        _state.Remove(from);
+                        if (known is not null) { known.Key = to; _state.Set(known); }
+                        _log?.Invoke($"Renamed {from} -> {to}");
+                    }
+                    catch (Exception ex) { _log?.Invoke($"Rename '{from}' failed: {ex.Message}"); }
+                }).ConfigureAwait(false);
         });
     }
 
@@ -228,5 +267,6 @@ internal sealed class LocalChangeSyncer : IDisposable
             _watcher = null;
         }
         _debounce.Dispose();
+        _uploadGate.Dispose();
     }
 }

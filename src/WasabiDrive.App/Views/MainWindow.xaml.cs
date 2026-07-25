@@ -1,5 +1,7 @@
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
 using WasabiDrive.App.Services;
 using WasabiDrive.App.ViewModels;
 
@@ -10,6 +12,15 @@ public partial class MainWindow : Window
     private readonly MainViewModel _vm;
     private readonly AppController _controller;
 
+    /// <summary>True while the log view is pinned to the newest line (the default).</summary>
+    private bool _logFollowTail = true;
+
+    /// <summary>Set while we reposition the log ourselves, so it isn't mistaken for a user scroll.</summary>
+    private bool _logAutoScrolling;
+
+    /// <summary>Last offset the user was reading at, restored after a log append.</summary>
+    private double _logUserOffset;
+
     /// <summary>Set by the tray "Exit" command so closing really exits instead of hiding.</summary>
     public bool AllowClose { get; set; }
 
@@ -19,6 +30,29 @@ public partial class MainWindow : Window
         _vm = vm;
         _controller = controller;
         DataContext = vm;
+    }
+
+    /// <summary>True when a row is selected, so menus can grey out Edit/Delete like the buttons do.</summary>
+    public bool HasSelection => _vm.SelectedMapping is not null;
+
+    // Public entry points so the tray menu can invoke the same actions as the header buttons
+    // instead of duplicating the logic.
+    public void InvokeAdd() => OnAdd(this, new RoutedEventArgs());
+    public void InvokeEdit() => OnEdit(this, new RoutedEventArgs());
+    public void InvokeDelete() => OnDelete(this, new RoutedEventArgs());
+    public void InvokeSettings() => OnSettings(this, new RoutedEventArgs());
+    public void InvokeAbout() => OnAbout(this, new RoutedEventArgs());
+
+    /// <summary>
+    /// Right-clicking a row selects it first, so the row menu's Edit/Delete (and the header
+    /// buttons) act on the row the user actually pointed at.
+    /// </summary>
+    private void OnListPreviewRightClick(object sender, MouseButtonEventArgs e)
+    {
+        var item = ItemsControl.ContainerFromElement((ListView)sender, (DependencyObject)e.OriginalSource)
+            as ListViewItem;
+        if (item is not null)
+            item.IsSelected = true;
     }
 
     private void OnAdd(object sender, RoutedEventArgs e)
@@ -76,6 +110,33 @@ public partial class MainWindow : Window
 
     private void OnAbout(object sender, RoutedEventArgs e) =>
         new AboutWindow { Owner = this }.ShowDialog();
+
+    // The activity log binds to a single string that the view model rebuilds on every appended
+    // line. Assigning TextBox.Text resets the scroll offset to 0, which yanked the view back to
+    // the top on each new log line. These two handlers keep the log where the reader wants it:
+    // pinned to the newest line by default, or held at the line they scrolled up to.
+
+    private void OnLogTextChanged(object sender, TextChangedEventArgs e)
+    {
+        _logAutoScrolling = true;
+        if (_logFollowTail)
+            LogBox.ScrollToEnd();
+        else
+            LogBox.ScrollToVerticalOffset(_logUserOffset);
+        _logAutoScrolling = false;
+    }
+
+    private void OnLogScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        // Ignore our own repositioning and the offset shifts caused by the content growing;
+        // only a deliberate user scroll changes whether we follow the tail.
+        if (_logAutoScrolling || e.ExtentHeightChange != 0d || e.VerticalChange == 0d)
+            return;
+
+        _logUserOffset = e.VerticalOffset;
+        // Within a line of the bottom counts as "following", so scrolling back down re-arms it.
+        _logFollowTail = e.VerticalOffset + e.ViewportHeight >= e.ExtentHeight - 1d;
+    }
 
     private bool ShowEditor(MappingEditViewModel editVm)
     {

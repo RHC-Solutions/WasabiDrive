@@ -46,11 +46,17 @@ public partial class App : Application
         var vm = new MainViewModel(_controller);
         _mainWindow = new MainWindow(vm, _controller);
 
-        _trayIcon = TrayIconFactory.Create(
-            onOpen: ShowMainWindow,
-            onMountAuto: () => _ = _controller.MountAutoAsync(),
-            onUnmountAll: () => _ = _controller.ShutdownAsync(),
-            onExit: ExitApp);
+        _trayIcon = TrayIconFactory.Create(new TrayActions(
+            Open: ShowMainWindow,
+            Add: () => WithMainWindow(w => w.InvokeAdd()),
+            Edit: () => WithMainWindow(w => w.InvokeEdit()),
+            Delete: () => WithMainWindow(w => w.InvokeDelete()),
+            MountAuto: () => _ = _controller.MountAutoAsync(),
+            UnmountAll: () => _ = _controller.ShutdownAsync(),
+            Settings: () => WithMainWindow(w => w.InvokeSettings()),
+            About: () => WithMainWindow(w => w.InvokeAbout()),
+            Exit: ExitApp,
+            HasSelection: () => _mainWindow?.HasSelection ?? false));
 
         // Register the scoped Explorer right-click menu, and keep it in sync with the mappings.
         ShellMenu.Register(Environment.ProcessPath, _controller.GetShellRoots());
@@ -66,6 +72,17 @@ public partial class App : Application
         // Offer updates on interactive launches when enabled (silent on failure / when current).
         if (!silentAutoMount && _controller.Settings.AutoCheckForUpdates)
             _ = UpdateCoordinator.CheckAsync(_mainWindow, userInitiated: false);
+    }
+
+    /// <summary>
+    /// Runs a tray action that opens a dialog. The dialogs own themselves to the main window, so it
+    /// has to be visible first — otherwise the dialog would parent to a hidden window.
+    /// </summary>
+    private void WithMainWindow(Action<MainWindow> action)
+    {
+        if (_mainWindow is null) return;
+        ShowMainWindow();
+        action(_mainWindow);
     }
 
     private void ShowMainWindow()

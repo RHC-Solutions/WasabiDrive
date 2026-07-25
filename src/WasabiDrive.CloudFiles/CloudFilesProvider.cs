@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
@@ -285,27 +286,25 @@ public sealed class CloudFilesProvider : IDisposable
         _ = Task.Run(() => HydrateAsync(connectionKey, transferKey, key, offset, length));
     }
 
+    /// <summary>Size of each parallel hydration range request. A multiple of the sector size.</summary>
+    private const int HydrationChunkSizeBytes = 4 << 20; // 4 MiB
+
+    /// <summary>Concurrent range GETs per hydration. Peak buffer use is this × the chunk size.</summary>
+    private const int HydrationStreams = 8;
+
     private async Task HydrateAsync(CF_CONNECTION_KEY connectionKey, long transferKey, string key, long offset, long length)
     {
         try
         {
-            await using var stream = await _openRead(key, offset, length, CancellationToken.None).ConfigureAwait(false);
+            // One sequential GET leaves most of the link idle: Wasabi serves a single stream far
+            // slower than several in parallel. Anything spanning more than one chunk is fetched as
+            // concurrent ranges; small reads (thumbnails, metadata probes) keep the simple path,
+            // where the extra requests would cost more than they save.
+            if (length > HydrationChunkSizeBytes)
+                await HydrateParallelAsync(connectionKey, transferKey, key, offset, length).ConfigureAwait(false);
+            else
+                await HydrateSequentialAsync(connectionKey, transferKey, key, offset, length).ConfigureAwait(false);
 
-            // cfapi requires each non-final chunk length to be a multiple of the sector size.
-            const int chunkSize = 1 << 20; // 1 MiB
-            var buffer = new byte[chunkSize];
-            var position = offset;
-            var remaining = length;
-
-            while (remaining > 0)
-            {
-                var want = (int)Math.Min(chunkSize, remaining);
-                var read = await ReadAtLeastAsync(stream, buffer, want).ConfigureAwait(false);
-                if (read <= 0) break;
-                TransferData(connectionKey, transferKey, buffer, position, read);
-                position += read;
-                remaining -= read;
-            }
             Hydrated?.Invoke(key);
         }
         catch (Exception ex)
@@ -313,6 +312,66 @@ public sealed class CloudFilesProvider : IDisposable
             _log?.Invoke($"Hydration of '{key}' failed: {ex.Message}");
             TransferError(connectionKey, transferKey, offset, length);
         }
+    }
+
+    private async Task HydrateSequentialAsync(
+        CF_CONNECTION_KEY connectionKey, long transferKey, string key, long offset, long length)
+    {
+        await using var stream = await _openRead(key, offset, length, CancellationToken.None).ConfigureAwait(false);
+
+        // cfapi requires each non-final chunk length to be a multiple of the sector size.
+        const int chunkSize = 1 << 20; // 1 MiB
+        var buffer = new byte[chunkSize];
+        var position = offset;
+        var remaining = length;
+
+        while (remaining > 0)
+        {
+            var want = (int)Math.Min(chunkSize, remaining);
+            var read = await ReadAtLeastAsync(stream, buffer, want).ConfigureAwait(false);
+            if (read <= 0) break;
+            TransferData(connectionKey, transferKey, buffer, position, read);
+            position += read;
+            remaining -= read;
+        }
+    }
+
+    private async Task HydrateParallelAsync(
+        CF_CONNECTION_KEY connectionKey, long transferKey, string key, long offset, long length)
+    {
+        var end = offset + length;
+        var chunks = new List<(long Offset, int Length)>();
+        for (var pos = offset; pos < end; pos += HydrationChunkSizeBytes)
+            chunks.Add((pos, (int)Math.Min(HydrationChunkSizeBytes, end - pos)));
+
+        // CfExecute calls for a single transfer key are serialised through this gate; only the
+        // network reads overlap. Windows accepts the completed ranges in any order.
+        using var transferGate = new SemaphoreSlim(1, 1);
+
+        await Parallel.ForEachAsync(
+            chunks,
+            new ParallelOptions { MaxDegreeOfParallelism = HydrationStreams },
+            async (chunk, ct) =>
+            {
+                var buffer = ArrayPool<byte>.Shared.Rent(chunk.Length);
+                try
+                {
+                    await using var stream = await _openRead(key, chunk.Offset, chunk.Length, ct)
+                        .ConfigureAwait(false);
+                    var read = await ReadAtLeastAsync(stream, buffer, chunk.Length).ConfigureAwait(false);
+
+                    // A short read would leave a hole in the range, and Windows would wait forever
+                    // for bytes that are never coming. Fail loudly so the outer catch reports it.
+                    if (read < chunk.Length)
+                        throw new IOException(
+                            $"Short read at offset {chunk.Offset}: wanted {chunk.Length} bytes, got {read}.");
+
+                    await transferGate.WaitAsync(ct).ConfigureAwait(false);
+                    try { TransferData(connectionKey, transferKey, buffer, chunk.Offset, read); }
+                    finally { transferGate.Release(); }
+                }
+                finally { ArrayPool<byte>.Shared.Return(buffer); }
+            }).ConfigureAwait(false);
     }
 
     private static async Task<int> ReadAtLeastAsync(Stream stream, byte[] buffer, int count)

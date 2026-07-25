@@ -1,6 +1,7 @@
 using Amazon.Runtime;
 using Amazon.S3;
 using Amazon.S3.Model;
+using Amazon.S3.Transfer;
 using WasabiDrive.Core.Models;
 
 namespace WasabiDrive.CloudFiles;
@@ -19,7 +20,20 @@ public sealed record S3ObjectEntry(string Key, long Size, DateTime LastModifiedU
 /// </summary>
 public sealed class WasabiS3Client : IDisposable
 {
+    /// <summary>Files at or above this size upload as a concurrent multipart transfer.</summary>
+    private const long MultipartThresholdBytes = 16L * 1024 * 1024;
+
+    /// <summary>Size of each multipart chunk. Peak upload memory is this × <see cref="UploadConcurrency"/>.</summary>
+    private const long MultipartPartSizeBytes = 16L * 1024 * 1024;
+
+    /// <summary>Parallel part uploads within one file.</summary>
+    private const int UploadConcurrency = 8;
+
+    /// <summary>S3 caps a single DeleteObjects request at 1000 keys.</summary>
+    private const int DeleteBatchSize = 1000;
+
     private readonly IAmazonS3 _s3;
+    private readonly TransferUtility _transfer;
     private readonly string _bucket;
 
     public WasabiS3Client(string endpointHost, string regionCode, string accessKeyId, string secretAccessKey, string bucket)
@@ -36,6 +50,11 @@ public sealed class WasabiS3Client : IDisposable
             AuthenticationRegion = regionCode,
         };
         _s3 = new AmazonS3Client(new BasicAWSCredentials(accessKeyId, secretAccessKey), config);
+        _transfer = new TransferUtility(_s3, new TransferUtilityConfig
+        {
+            ConcurrentServiceRequests = UploadConcurrency,
+            MinSizeBeforePartUpload = MultipartThresholdBytes,
+        });
     }
 
     /// <summary>Builds a client for the given mapping + credentials.</summary>
@@ -89,6 +108,33 @@ public sealed class WasabiS3Client : IDisposable
     /// <summary>Uploads a local file to <paramref name="key"/> (overwrites). Returns the new ETag.</summary>
     public async Task<string?> PutObjectAsync(string key, string localPath, CancellationToken ct = default)
     {
+        // A single PUT means one serial stream, which leaves most of the link idle on big files.
+        // Above the threshold, hand off to a concurrent multipart transfer instead.
+        long length;
+        try { length = new FileInfo(localPath).Length; }
+        catch { length = 0; }
+
+        if (length >= MultipartThresholdBytes)
+        {
+            await _transfer.UploadAsync(new TransferUtilityUploadRequest
+            {
+                BucketName = _bucket,
+                Key = key,
+                FilePath = localPath,
+                PartSize = MultipartPartSizeBytes,
+                DisablePayloadSigning = true,
+            }, ct).ConfigureAwait(false);
+
+            // TransferUtility doesn't surface the CompleteMultipartUpload response, and the caller
+            // needs the real ETag: the pull reconcile compares it against the remote one to decide
+            // whether an object changed, so a missing ETag would make every large upload look like
+            // a remote change and pull the file straight back down. One HEAD is cheap next to a
+            // multipart upload.
+            var head = await _s3.GetObjectMetadataAsync(
+                new GetObjectMetadataRequest { BucketName = _bucket, Key = key }, ct).ConfigureAwait(false);
+            return head.ETag;
+        }
+
         var request = new PutObjectRequest
         {
             BucketName = _bucket,
@@ -104,6 +150,57 @@ public sealed class WasabiS3Client : IDisposable
     public async Task DeleteObjectAsync(string key, CancellationToken ct = default) =>
         await _s3.DeleteObjectAsync(new DeleteObjectRequest { BucketName = _bucket, Key = key }, ct)
             .ConfigureAwait(false);
+
+    /// <summary>The outcome of a batched delete: which keys went, and which the server rejected.</summary>
+    public sealed record DeleteResult(IReadOnlyList<string> Deleted, IReadOnlyList<string> Failed);
+
+    /// <summary>
+    /// Deletes many objects using batched DeleteObjects requests (up to 1000 keys each) instead of
+    /// one round trip per key — the difference between one request and a thousand when a folder goes.
+    /// Partial failures are reported rather than thrown, so the keys that did go can be forgotten
+    /// while the ones that didn't stay tracked.
+    /// </summary>
+    public async Task<DeleteResult> DeleteObjectsAsync(
+        IEnumerable<string> keys, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(keys);
+        var deleted = new List<string>();
+        var failed = new List<string>();
+
+        foreach (var batch in keys.Distinct(StringComparer.Ordinal).Chunk(DeleteBatchSize))
+        {
+            // Quiet keeps the response to just the failures, so a 1000-key delete doesn't ship a
+            // large success payload back. Note the SDK signals per-key failures by throwing
+            // DeleteObjectsException rather than returning them, so both paths are handled.
+            var request = new DeleteObjectsRequest
+            {
+                BucketName = _bucket,
+                Objects = batch.Select(k => new KeyVersion { Key = k }).ToList(),
+                Quiet = true,
+            };
+
+            try
+            {
+                var response = await _s3.DeleteObjectsAsync(request, ct).ConfigureAwait(false);
+                Record(batch, response.DeleteErrors);
+            }
+            catch (DeleteObjectsException ex)
+            {
+                // Some keys in this batch failed; the others were still removed.
+                Record(batch, ex.Response.DeleteErrors);
+            }
+        }
+
+        return new DeleteResult(deleted, failed);
+
+        void Record(string[] batch, List<DeleteError>? errors)
+        {
+            var bad = errors?.Select(e => e.Key).ToHashSet(StringComparer.Ordinal)
+                      ?? new HashSet<string>(StringComparer.Ordinal);
+            deleted.AddRange(batch.Where(k => !bad.Contains(k)));
+            failed.AddRange(batch.Where(bad.Contains));
+        }
+    }
 
     /// <summary>Server-side copy then delete of the source (an S3 "rename").</summary>
     public async Task MoveObjectAsync(string sourceKey, string destKey, CancellationToken ct = default)
@@ -130,5 +227,9 @@ public sealed class WasabiS3Client : IDisposable
         });
     }
 
-    public void Dispose() => _s3.Dispose();
+    public void Dispose()
+    {
+        _transfer.Dispose();
+        _s3.Dispose();
+    }
 }

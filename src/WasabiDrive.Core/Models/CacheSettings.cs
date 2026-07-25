@@ -61,6 +61,58 @@ public sealed class CacheSettings
     public int BufferSizeMb { get; set; } = 16;
 
     /// <summary>
+    /// Extra sequential read-ahead beyond <see cref="BufferSizeMb"/>, in MiB
+    /// (<c>--vfs-read-ahead</c>, cache-mode Full only). 0 = omit the flag.
+    /// </summary>
+    public int ReadAheadMb { get; set; } = 128;
+
+    /// <summary>
+    /// Parallel download streams per open file (<c>--vfs-read-chunk-streams</c>). Wasabi is a
+    /// high-performance object store, so many small concurrent range GETs beat one sequential
+    /// stream by a wide margin. 0 = rclone's default (one stream with a doubling chunk size).
+    /// </summary>
+    public int ReadChunkStreams { get; set; } = 16;
+
+    /// <summary>
+    /// Size of each parallel read chunk in MiB (<c>--vfs-read-chunk-size</c>). Small chunks are
+    /// correct when <see cref="ReadChunkStreams"/> is high — rclone's own S3 guidance is
+    /// 16 streams × 4 MiB. 0 = omit the flag.
+    /// </summary>
+    public int ReadChunkSizeMb { get; set; } = 4;
+
+    /// <summary>
+    /// How many files upload from the cache to Wasabi at once (<c>--transfers</c>). The main lever
+    /// for copying many small files, where per-object latency dominates.
+    /// </summary>
+    public int Transfers { get; set; } = 8;
+
+    /// <summary>
+    /// Parallel multipart chunks within a single large upload (<c>--s3-upload-concurrency</c>).
+    /// </summary>
+    public int UploadConcurrency { get; set; } = 4;
+
+    /// <summary>
+    /// Multipart upload chunk size in MiB (<c>--s3-chunk-size</c>); rclone's default of 5 MiB
+    /// makes for a lot of round trips on large files. Worst-case upload buffer memory is
+    /// <see cref="Transfers"/> × <see cref="UploadConcurrency"/> × this value, so raise it with care.
+    /// </summary>
+    public int UploadChunkSizeMb { get; set; } = 16;
+
+    /// <summary>
+    /// Take modification times from the S3 object's <c>LastModified</c> (free, comes back with the
+    /// directory listing) instead of the per-object metadata, which costs an extra HEAD request per
+    /// file (<c>--use-server-modtime</c>). Timestamps then reflect upload time rather than the
+    /// original file's mtime.
+    /// </summary>
+    public bool UseServerModTime { get; set; } = true;
+
+    /// <summary>
+    /// Detect changes from size + modtime instead of hashing (<c>--vfs-fast-fingerprint</c>),
+    /// avoiding extra requests when the VFS revalidates a cached file.
+    /// </summary>
+    public bool FastFingerprint { get; set; } = true;
+
+    /// <summary>
     /// Directory where rclone stores the on-disk VFS cache (<c>--cache-dir</c>). Null/blank =
     /// rclone's default (<c>%LOCALAPPDATA%\rclone</c>). Point this at a roomy drive when using a
     /// large cache size.
@@ -76,6 +128,14 @@ public sealed class CacheSettings
         VfsCacheMaxAge = VfsCacheMaxAge,
         DirCacheTime = DirCacheTime,
         BufferSizeMb = BufferSizeMb,
+        ReadAheadMb = ReadAheadMb,
+        ReadChunkStreams = ReadChunkStreams,
+        ReadChunkSizeMb = ReadChunkSizeMb,
+        Transfers = Transfers,
+        UploadConcurrency = UploadConcurrency,
+        UploadChunkSizeMb = UploadChunkSizeMb,
+        UseServerModTime = UseServerModTime,
+        FastFingerprint = FastFingerprint,
         CacheDir = CacheDir,
     };
 }

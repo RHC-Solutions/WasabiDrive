@@ -14,6 +14,20 @@
     <Window.Resources>
         <conv:NullToBoolConverter x:Key="NullToBool"/>
         <conv:BoolToVisibilityConverter x:Key="BoolToVis"/>
+
+        <!-- Right-click menu for a mapping row. Binding through PlacementTarget is what makes the
+             shared menu instance act on the row that opened it rather than a stale DataContext. -->
+        <ContextMenu x:Key="MappingRowMenu"
+                     DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+            <MenuItem Header="Mount" Command="{Binding MountCommand}" FontWeight="SemiBold"/>
+            <MenuItem Header="Unmount" Command="{Binding UnmountCommand}"/>
+            <Separator/>
+            <MenuItem Header="Edit…" Click="OnEdit"/>
+            <MenuItem Header="Delete" Click="OnDelete"/>
+            <Separator/>
+            <MenuItem Header="Open in Explorer" Command="{Binding OpenInExplorerCommand}"/>
+            <MenuItem Header="Copy drive path" Command="{Binding CopyPathCommand}"/>
+        </ContextMenu>
     </Window.Resources>
 
     <Grid>
@@ -60,7 +74,13 @@
 
         <!-- Mappings list -->
         <ListView Grid.Row="2" Margin="16,12,16,0" Background="Transparent" BorderBrush="{StaticResource WC.Brush.Border}"
-                  ItemsSource="{Binding Mappings}" SelectedItem="{Binding SelectedMapping}">
+                  ItemsSource="{Binding Mappings}" SelectedItem="{Binding SelectedMapping}"
+                  PreviewMouseRightButtonDown="OnListPreviewRightClick">
+            <ListView.ItemContainerStyle>
+                <Style TargetType="ListViewItem" BasedOn="{StaticResource WC.MappingRow}">
+                    <Setter Property="ContextMenu" Value="{StaticResource MappingRowMenu}"/>
+                </Style>
+            </ListView.ItemContainerStyle>
             <ListView.View>
                 <GridView>
                     <GridViewColumn Header="Name" Width="140" DisplayMemberBinding="{Binding Name}"/>
@@ -99,11 +119,13 @@
                     <TextBlock Text="Activity log" Foreground="{StaticResource WC.Brush.TextSecondary}"
                                FontWeight="SemiBold" FontSize="12"/>
                 </Border>
-                <TextBox Text="{Binding LogText, Mode=OneWay}" IsReadOnly="True" Background="#FF141428"
+                <TextBox x:Name="LogBox" Text="{Binding LogText, Mode=OneWay}" IsReadOnly="True"
+                         Background="#FF141428"
                          Foreground="#FFDCDCDC" BorderThickness="0"
                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
                          FontFamily="{StaticResource WC.Font.Mono}" FontSize="12" TextWrapping="NoWrap"
-                         Padding="10,6"/>
+                         Padding="10,6"
+                         TextChanged="OnLogTextChanged" ScrollViewer.ScrollChanged="OnLogScrollChanged"/>
             </DockPanel>
         </Border>
     </Grid>

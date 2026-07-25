@@ -69,6 +69,8 @@ public sealed class RcloneRunner : IDisposable
             args.Add(ToRcloneDuration(c.VfsCacheMaxAge));
         }
 
+        AddThroughputArguments(args, c);
+
         if (!string.IsNullOrWhiteSpace(c.CacheDir))
         {
             args.Add("--cache-dir");
@@ -76,6 +78,60 @@ public sealed class RcloneRunner : IDisposable
         }
 
         return args;
+    }
+
+    /// <summary>
+    /// Adds the copy/move throughput flags. Wasabi is a high-bandwidth, high-latency-per-request
+    /// store, so raw speed comes almost entirely from doing many requests concurrently and from
+    /// not spending requests on things we don't need (per-object HEADs for modtimes and hashes).
+    /// </summary>
+    private static void AddThroughputArguments(List<string> args, CacheSettings c)
+    {
+        // Reads: many concurrent range GETs per open file. rclone's own S3 guidance is a high
+        // stream count with a small constant chunk size (16 × 4Mi); throughput scales roughly
+        // linearly with the stream count.
+        if (c.ReadChunkStreams > 0)
+        {
+            args.Add("--vfs-read-chunk-streams");
+            args.Add(c.ReadChunkStreams.ToString());
+        }
+        if (c.ReadChunkSizeMb > 0)
+        {
+            args.Add("--vfs-read-chunk-size");
+            args.Add($"{c.ReadChunkSizeMb}Mi");
+        }
+
+        // Sequential read-ahead only does anything when whole files land in the cache.
+        if (c.ReadAheadMb > 0 && c.CacheMode == VfsCacheMode.Full)
+        {
+            args.Add("--vfs-read-ahead");
+            args.Add($"{c.ReadAheadMb}Mi");
+        }
+
+        // Writes: how many cached files upload at once (dominates many-small-file copies) and how
+        // many multipart chunks go out per large file.
+        if (c.Transfers > 0)
+        {
+            args.Add("--transfers");
+            args.Add(c.Transfers.ToString());
+        }
+        if (c.UploadConcurrency > 0)
+        {
+            args.Add("--s3-upload-concurrency");
+            args.Add(c.UploadConcurrency.ToString());
+        }
+        if (c.UploadChunkSizeMb > 0)
+        {
+            args.Add("--s3-chunk-size");
+            args.Add($"{c.UploadChunkSizeMb}Mi");
+        }
+
+        // Request-count savings: reading an object's metadata modtime costs a HEAD per file, and
+        // hashing to detect changes costs another. Both are avoidable on a mount.
+        if (c.UseServerModTime)
+            args.Add("--use-server-modtime");
+        if (c.FastFingerprint)
+            args.Add("--vfs-fast-fingerprint");
     }
 
     /// <summary>rclone accepts durations like "3600s"; use whole seconds for an unambiguous value.</summary>
