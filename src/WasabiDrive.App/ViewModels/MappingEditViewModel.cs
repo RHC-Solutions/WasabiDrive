@@ -1,5 +1,6 @@
 using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
+using WasabiDrive.CloudFiles;
 using WasabiDrive.Core.Models;
 
 namespace WasabiDrive.App.ViewModels;
@@ -9,10 +10,21 @@ public sealed partial class MappingEditViewModel : ObservableObject
 {
     private readonly Guid _id;
 
-    public MappingEditViewModel(Mapping? existing, WasabiCredentials? credentials, AppSettings settings)
+    /// <summary>Folders other mappings already occupy; two sync roots must not overlap.</summary>
+    private readonly IReadOnlyList<string> _otherFolders;
+
+    /// <summary>The folder this mapping was already registered at, if it is an existing on-demand one.</summary>
+    private readonly string? _originalFolder;
+
+    public MappingEditViewModel(Mapping? existing, WasabiCredentials? credentials, AppSettings settings,
+        IEnumerable<string>? otherFolders = null)
     {
         _id = existing?.Id ?? Guid.NewGuid();
         IsNew = existing is null;
+        _otherFolders = otherFolders?.ToList() ?? new List<string>();
+        _originalFolder = existing?.Mode == MappingMode.OnDemandFolder
+            ? OnDemandSyncManager.ResolveFolderPath(existing)
+            : null;
 
         var m = existing ?? new Mapping { Cache = settings.DefaultCache.Clone() };
         Name = m.Name;
@@ -60,8 +72,39 @@ public sealed partial class MappingEditViewModel : ObservableObject
           + "with pin / free-up-space and no drive letter. Recommended."
         : "A virtual drive (e.g. W:) backed by rclone + WinFsp. The whole bucket appears as a mapped drive.";
 
-    [ObservableProperty] private string _name = string.Empty;
-    [ObservableProperty] private string _bucketName = string.Empty;
+    /// <summary>
+    /// The folder that will actually be used, with the default filled in when no custom location is
+    /// set. Shown in the dialog so the location is never a mystery — the same thing OneDrive does by
+    /// always displaying its folder path rather than leaving the field blank.
+    /// </summary>
+    public string EffectiveFolderPath => OnDemandSyncManager.ResolveFolderPath(new Mapping
+    {
+        LocalFolderPath = string.IsNullOrWhiteSpace(LocalFolderPath) ? null : LocalFolderPath.Trim(),
+        Name = Name,
+        BucketName = BucketName,
+    });
+
+    /// <summary>True when a location has been chosen explicitly rather than inherited from the default.</summary>
+    public bool UsesCustomFolder => !string.IsNullOrWhiteSpace(LocalFolderPath);
+
+    /// <summary>True when saving would move an existing mapping's folder, orphaning the old one.</summary>
+    public bool FolderIsMoving =>
+        _originalFolder is not null &&
+        !string.Equals(_originalFolder.TrimEnd('\\'), EffectiveFolderPath.TrimEnd('\\'),
+            StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The folder this mapping currently occupies, for the "moving" warning.</summary>
+    public string? OriginalFolderPath => _originalFolder;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(EffectiveFolderPath))]
+    [NotifyPropertyChangedFor(nameof(FolderIsMoving))]
+    private string _name = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(EffectiveFolderPath))]
+    [NotifyPropertyChangedFor(nameof(FolderIsMoving))]
+    private string _bucketName = string.Empty;
     [ObservableProperty] private string _subPath = string.Empty;
     [ObservableProperty] private string _driveLetter = "W";
     [ObservableProperty] private string _regionCode = "us-east-1";
@@ -73,7 +116,11 @@ public sealed partial class MappingEditViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(ModeDescription))]
     private MappingMode _mode = MappingMode.OnDemandFolder;
 
-    [ObservableProperty] private string _localFolderPath = string.Empty;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(EffectiveFolderPath))]
+    [NotifyPropertyChangedFor(nameof(UsesCustomFolder))]
+    [NotifyPropertyChangedFor(nameof(FolderIsMoving))]
+    private string _localFolderPath = string.Empty;
 
     [ObservableProperty] private VfsCacheMode _cacheMode = VfsCacheMode.Full;
     [ObservableProperty] private int _vfsCacheMaxSizeMb = 10 * 1024;
@@ -96,7 +143,23 @@ public sealed partial class MappingEditViewModel : ObservableObject
             return "Please choose a valid region.";
         if (string.IsNullOrWhiteSpace(AccessKeyId) || string.IsNullOrWhiteSpace(SecretAccessKey))
             return "Access key and secret key are required.";
+        if (IsOnDemandMode && OnDemandFolderRules.Validate(LocalFolderPath, _otherFolders) is { } folderError)
+            return folderError;
         return null;
+    }
+
+    /// <summary>Resets the folder to the default location under the user profile.</summary>
+    public void UseDefaultFolder() => LocalFolderPath = string.Empty;
+
+    /// <summary>
+    /// Sets the folder from a parent directory the user picked, creating a named subfolder inside it
+    /// the way OneDrive does — so choosing "D:\" yields "D:\&lt;name&gt;" rather than turning the whole
+    /// volume into a sync root.
+    /// </summary>
+    public void SetFolderFromParent(string parentDirectory)
+    {
+        var leaf = string.IsNullOrWhiteSpace(Name) ? BucketName : Name;
+        LocalFolderPath = OnDemandFolderRules.CombineForMapping(parentDirectory, leaf);
     }
 
     public Mapping BuildMapping() => new()

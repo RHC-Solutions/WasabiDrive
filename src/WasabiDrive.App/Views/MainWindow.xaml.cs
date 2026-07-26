@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using WasabiDrive.App.Services;
 using WasabiDrive.App.ViewModels;
+using WasabiDrive.Core.Models;
 
 namespace WasabiDrive.App.Views;
 
@@ -57,7 +58,7 @@ public partial class MainWindow : Window
 
     private void OnAdd(object sender, RoutedEventArgs e)
     {
-        var editVm = new MappingEditViewModel(null, null, _controller.Settings);
+        var editVm = new MappingEditViewModel(null, null, _controller.Settings, OtherOnDemandFolders(null));
         if (ShowEditor(editVm))
             _controller.SaveMapping(editVm.BuildMapping(), editVm.BuildCredentials());
     }
@@ -66,10 +67,21 @@ public partial class MainWindow : Window
     {
         if (_vm.SelectedMapping is not { } selected) return;
         var creds = _controller.GetCredentials(selected.Model.Id);
-        var editVm = new MappingEditViewModel(selected.Model, creds, _controller.Settings);
+        var editVm = new MappingEditViewModel(selected.Model, creds, _controller.Settings,
+            OtherOnDemandFolders(selected.Model.Id));
         if (ShowEditor(editVm))
             _controller.SaveMapping(editVm.BuildMapping(), editVm.BuildCredentials());
     }
+
+    /// <summary>
+    /// Folders already used by other on-demand mappings, so the editor can reject an overlapping
+    /// choice — two Cloud Files sync roots must not contain one another.
+    /// </summary>
+    private IReadOnlyList<string> OtherOnDemandFolders(Guid? excludeId) =>
+        _controller.Mappings
+            .Where(m => m.Model.Mode == MappingMode.OnDemandFolder && m.Model.Id != excludeId)
+            .Select(m => _controller.GetOnDemandFolder(m.Model))
+            .ToList();
 
     private async void OnDelete(object sender, RoutedEventArgs e)
     {

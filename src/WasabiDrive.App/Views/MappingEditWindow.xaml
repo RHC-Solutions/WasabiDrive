@@ -41,7 +41,10 @@
             </Grid.RowDefinitions>
 
             <TextBlock Grid.Row="0" Grid.Column="0" Text="Display name"/>
-            <TextBox   Grid.Row="0" Grid.Column="1" Margin="0,4" Text="{Binding Name}"/>
+            <!-- PropertyChanged, not the LostFocus default: the folder-location preview below is
+                 derived from this and should follow what you type. -->
+            <TextBox   Grid.Row="0" Grid.Column="1" Margin="0,4"
+                       Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"/>
 
             <TextBlock Grid.Row="1" Grid.Column="0" Text="Mode" VerticalAlignment="Top" Margin="0,8,10,0"/>
             <StackPanel Grid.Row="1" Grid.Column="1" Margin="0,4">
@@ -58,7 +61,9 @@
             </StackPanel>
 
             <TextBlock Grid.Row="2" Grid.Column="0" Text="Bucket name *"/>
-            <TextBox   Grid.Row="2" Grid.Column="1" Margin="0,4" Text="{Binding BucketName}"/>
+            <!-- Also feeds the folder preview: it is the fallback leaf when there is no display name. -->
+            <TextBox   Grid.Row="2" Grid.Column="1" Margin="0,4"
+                       Text="{Binding BucketName, UpdateSourceTrigger=PropertyChanged}"/>
 
             <TextBlock Grid.Row="3" Grid.Column="0" Text="Sub-path (optional)"/>
             <TextBox   Grid.Row="3" Grid.Column="1" Margin="0,4" Text="{Binding SubPath}"/>
@@ -76,15 +81,26 @@
                        Visibility="{Binding IsDriveLetterMode, Converter={StaticResource BoolToVis}}"/>
 
             <!-- On-demand folder mode -->
-            <TextBlock Grid.Row="6" Grid.Column="0" Text="Folder (optional)"
+            <TextBlock Grid.Row="6" Grid.Column="0" Text="Folder location"
+                       VerticalAlignment="Top" Margin="0,8,10,0"
                        Visibility="{Binding IsOnDemandMode, Converter={StaticResource BoolToVis}}"/>
-            <DockPanel Grid.Row="6" Grid.Column="1" Margin="0,4"
-                       Visibility="{Binding IsOnDemandMode, Converter={StaticResource BoolToVis}}">
-                <Button DockPanel.Dock="Right" Content="Browse…" Click="OnBrowseFolder"
-                        Padding="10,2" Margin="6,0,0,0"/>
-                <TextBox Text="{Binding LocalFolderPath}"
-                         ToolTip="Where the on-demand folder appears. Blank = a default under your user profile."/>
-            </DockPanel>
+            <StackPanel Grid.Row="6" Grid.Column="1" Margin="0,4"
+                        Visibility="{Binding IsOnDemandMode, Converter={StaticResource BoolToVis}}">
+                <!-- The resolved path, always shown so the location is never a mystery. -->
+                <TextBox Text="{Binding EffectiveFolderPath, Mode=OneWay}" IsReadOnly="True"
+                         TextWrapping="Wrap"
+                         ToolTip="The folder that will appear in Explorer for this bucket."/>
+                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                    <Button Content="Change…" Click="OnBrowseFolder" Padding="12,3" Margin="0,0,6,0"/>
+                    <Button Content="Use default" Click="OnUseDefaultFolder" Padding="12,3"
+                            IsEnabled="{Binding UsesCustomFolder}"/>
+                </StackPanel>
+                <!-- Keep this on one line: a newline inside the attribute survives into the rendered
+                     text as a run of spaces rather than being collapsed. -->
+                <TextBlock Text="Files appear here as placeholders and download when opened. Pick a location with room for whatever you pin."
+                           TextWrapping="Wrap" Margin="0,6,0,0" FontSize="11"
+                           Foreground="{StaticResource WC.Brush.TextSecondary}"/>
+            </StackPanel>
 
             <TextBlock Grid.Row="7" Grid.Column="0" Text="Access key *"/>
             <TextBox   Grid.Row="7" Grid.Column="1" Margin="0,4" Text="{Binding AccessKeyId}"/>
