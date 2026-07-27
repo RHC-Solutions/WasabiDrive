@@ -3,7 +3,7 @@
 ; (Inno Setup 6+, https://jrsoftware.org/isdl.php). scripts\build-installer.ps1 does both.
 
 #define AppName "WasabiDrive"
-#define AppVersion "0.6.6"
+#define AppVersion "0.6.7"
 #define AppPublisher "RHC Solutions"
 #define AppPublisherUrl "https://rhcsolutions.com/"
 #define PublishDir "..\src\WasabiDrive.App\bin\Release\net8.0-windows10.0.19041.0\win-x64\publish"
