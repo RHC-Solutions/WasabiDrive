@@ -44,6 +44,11 @@ public sealed class CacheSettings
     /// change notifications, so changes made by other tools (the Wasabi console, Wasabi Commander)
     /// only appear on the drive after this interval. Kept short (1 min) so external changes surface
     /// quickly; raise it to cut S3 LIST requests if you don't edit the bucket elsewhere.
+    ///
+    /// IMPORTANT: this must exceed the time it takes to enumerate the bucket's largest directory.
+    /// A listing that outlives its own cache entry is discarded before it can be served, so rclone
+    /// restarts it forever and the drive never opens. A bucket whose root holds ~800k objects with
+    /// no common prefixes takes 10+ minutes to list, which the 1-minute default cannot survive.
     /// </summary>
     [XmlIgnore]
     public TimeSpan DirCacheTime { get; set; } = TimeSpan.FromMinutes(1);

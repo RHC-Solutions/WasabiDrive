@@ -131,12 +131,34 @@ use the driver.
   Explorer's own toolbar (`Refresh "WasabiDriveCache" (F5)`) and VS Code status-bar items.
 - **The window may sit on a secondary monitor with negative coordinates.** Do not assume positive
   offsets when reasoning about rects.
+- **Never build the installer from a deep path.** Inno Setup is not long-path aware, and the publish
+  tree adds ~75 chars (`src\WasabiDrive.App\bin\Release\net8.0-windows10.0.19041.0\win-x64\publish\`).
+  Compiling from an agent scratchpad under `%TEMP%\claude\<session-guid>\…` blows past `MAX_PATH` and
+  ISCC aborts with a bare *"The system cannot find the path specified"* on the first `Compressing:`
+  line — which reads like a missing file, not a length problem. Build from a short root (`C:\wdbuild`).
+- **`rclone.exe` and `winfsp.msi` are gitignored**, so a fresh clone cannot build an installer until
+  you drop them into `third_party\rclone\` and `third_party\winfsp\`. `publish.ps1` warns about
+  rclone; the `.iss` fails harder on the missing MSI.
+- **A mount that is slow to warm up is not a mount that failed.** `MountManager.DriveIsReady` must
+  never issue filesystem I/O against the volume (`Directory.Exists(@"X:\")`): a mount cannot answer
+  anything about its root until that root is fully enumerated, so on a large flat bucket the probe
+  blocks, `MountTimeout` (20s) fires, and the supervisor kills a healthy mount — whose replacement
+  restarts the enumeration from zero, forever. Probe the drive **bitmask** (`GetLogicalDrives`)
+  instead, which WinFsp sets the moment it registers the letter.
 - **Scrollbar buttons report raw SVG path geometry as their automation `Name`**
   (`M19.091797,14.970703L10,5.888672…`). Harmless, but it makes `tree` output noisy.
 - **Do not grep the log for `Error`.** Object keys in this bucket contain the word (e.g. *"Async
   Status and Error Handling.mp4"*), so a naive match returns dozens of false hits. Match the severity
   field: `'\s(ERROR|CRITICAL)\s+:'`. The one real recurring entry, `symlinks not supported without
   the --links flag: /`, is benign rclone noise on mount.
+- **Three rclone log lines that look like bugs and are not.** `symlinks not supported without the
+  --links flag: /` is `VFS.Readlink` answering a probe of the mount root at startup — the shell asks
+  once per mount. `poll-interval is not supported by this remote` is expected for every S3 backend
+  (no change notification; external edits appear only after `--dir-cache-time`). `Entry doesn't
+  belong in directory "" (same as directory)` means a key in that bucket has a **leading slash**
+  (`/pbx01backup/…`): legal S3, not a valid path, so rclone drops the entry and the file is invisible
+  on the drive. Do not "clean up" such keys before listing what is under them — in this account they
+  were live nightly PBX backups.
 - **`VerboseLogging: true`** in `settings.json` runs rclone at `DEBUG`, which turns the activity log
   into a firehose. That is the setting to toggle when testing log UI behaviour.
 - **Cache location is per-mapping, not global.** `settings.json → DefaultCache.CacheDir` only applies

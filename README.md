@@ -106,6 +106,24 @@ The installer bundles `rclone.exe`, installs WinFsp if absent, and creates short
 - `--vfs-cache-mode full` is the default for best app compatibility; tune per-mapping or globally.
 - Not code-signed yet — SmartScreen may warn on first run.
 
+### Buckets with a very large flat root
+
+S3 has no directory index, so a drive-letter mount has to enumerate a directory before it can show
+it. That is cheap for a normal bucket — rclone lists with a delimiter, so the root returns after one
+page no matter how big the bucket is — but it is expensive when objects sit at the **top level with
+no common prefixes**. An application's private object store is the usual case: Nextcloud primary
+storage, for example, keeps every file as a flat `urn:oid:<id>` / `uri:oid:preview:<id>` key, so
+"list the root" means "read every key in the bucket".
+
+For such a bucket, raise **Dir cache time** for that mapping well above the time a full root listing
+takes (hours, not the 1-minute default). A listing that outlives its own cache entry is thrown away
+before it can be served, so rclone restarts it forever and the drive never opens. Roughly 800k keys
+takes 10+ minutes to enumerate and holds several hundred MB of RAM.
+
+Be aware of what you get: the object names are the application's internal ids, not your filenames —
+Nextcloud keeps the real names and folder tree in its **database**, not in the bucket. Mounting such
+a bucket is not a way to browse that application's files. Use the application's own client.
+
 ## Testing
 
 See [docs/TESTING.md](docs/TESTING.md) for the manual smoke-test checklist (login task, drive-letter

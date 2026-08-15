@@ -55,6 +55,12 @@ public sealed class RcloneRunner : IDisposable
             // "$RECYCLE.BIN/" prefix in the bucket (which left "deleted" files/folders behind and
             // kept costing storage). Also makes folder (Dir.Remove) deletes work.
             "--network-mode",
+            // Start warming the directory cache as soon as the mount comes up, in the background,
+            // instead of on the first click. Buckets with a large flat root (e.g. an application's
+            // object store, where every object sits at the top level with no common prefixes) take
+            // minutes to enumerate; without this the first Explorer click is what pays that cost and
+            // the drive looks frozen.
+            "--vfs-refresh",
             "--log-level", verbose ? "DEBUG" : "INFO",
         };
 

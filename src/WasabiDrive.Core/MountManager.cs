@@ -171,9 +171,26 @@ public sealed class MountManager : IAsyncDisposable
             new MountStatusChangedEventArgs { MappingId = session.Mapping.Id, State = state, Message = message });
     }
 
+    /// <summary>
+    /// True once the drive letter exists in the OS drive map.
+    ///
+    /// This deliberately does NOT touch the volume. <c>Directory.Exists(@"X:\")</c> issues a real
+    /// filesystem request, and a mount cannot answer anything about its root until that root has
+    /// been fully enumerated — on a bucket whose root holds hundreds of thousands of objects with
+    /// no common prefixes that takes many minutes. An I/O-based probe therefore blocks, hits
+    /// <see cref="MountTimeout"/>, and tears down a mount that was healthy and merely warming up,
+    /// so the next attempt restarts the enumeration from scratch and the drive never appears.
+    /// GetLogicalDrives reads the drive bitmask only, which WinFsp sets as soon as it registers.
+    /// </summary>
     private static bool DriveIsReady(string driveTarget)
     {
-        try { return Directory.Exists(driveTarget + Path.DirectorySeparatorChar); }
+        try
+        {
+            var letter = driveTarget.TrimEnd('\\', ':');
+            if (letter.Length == 0) return false;
+            return Directory.GetLogicalDrives().Any(d =>
+                d.Length > 0 && char.ToUpperInvariant(d[0]) == char.ToUpperInvariant(letter[0]));
+        }
         catch { return false; }
     }
 

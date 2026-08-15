@@ -40,6 +40,9 @@ public class RcloneArgumentTests
         Assert.Contains("--volname Backups", joined);
         // Network-drive mode: no Windows Recycle Bin, so deletes are real S3 deletes.
         Assert.Contains("--network-mode", joined);
+        // Warm the directory cache in the background at mount, so the first click doesn't pay for
+        // enumerating a bucket with a very large flat root.
+        Assert.Contains("--vfs-refresh", joined);
     }
 
     [Fact]
