@@ -202,16 +202,105 @@ public sealed class WasabiS3Client : IDisposable
         }
     }
 
+    /// <summary>A single CopyObject cannot exceed 5 GiB; past that the copy must be multipart.</summary>
+    private const long SingleCopyLimitBytes = 5L * 1024 * 1024 * 1024;
+
+    /// <summary>Part size for multipart copies: 512 MiB x 10,000 parts covers any legal object.</summary>
+    private const long CopyPartSizeBytes = 512L * 1024 * 1024;
+
+    /// <summary>
+    /// Server-side copy of one object. Nothing is downloaded — the bytes never leave Wasabi.
+    /// Above the 5 GiB single-call limit this switches to a multipart copy; pass
+    /// <paramref name="size"/> when it is already known (a listing gives it for free) to avoid the
+    /// HEAD request that otherwise has to establish which path to take.
+    /// </summary>
+    public async Task CopyObjectAsync(
+        string sourceKey, string destKey, long? size = null, CancellationToken ct = default)
+    {
+        var bytes = size ?? (await _s3.GetObjectMetadataAsync(
+            new GetObjectMetadataRequest { BucketName = _bucket, Key = sourceKey }, ct)
+            .ConfigureAwait(false)).ContentLength;
+
+        if (bytes <= SingleCopyLimitBytes)
+        {
+            await _s3.CopyObjectAsync(new CopyObjectRequest
+            {
+                SourceBucket = _bucket,
+                SourceKey = sourceKey,
+                DestinationBucket = _bucket,
+                DestinationKey = destKey,
+            }, ct).ConfigureAwait(false);
+            return;
+        }
+
+        await CopyLargeObjectAsync(sourceKey, destKey, bytes, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Multipart server-side copy for objects over 5 GiB. Parts are copied in order; on any
+    /// failure the upload is aborted so Wasabi does not keep billing for orphaned parts.
+    /// </summary>
+    private async Task CopyLargeObjectAsync(string sourceKey, string destKey, long size, CancellationToken ct)
+    {
+        var initiated = await _s3.InitiateMultipartUploadAsync(new InitiateMultipartUploadRequest
+        {
+            BucketName = _bucket,
+            Key = destKey,
+        }, ct).ConfigureAwait(false);
+
+        try
+        {
+            var parts = new List<PartETag>();
+            long position = 0;
+            for (var partNumber = 1; position < size; partNumber++)
+            {
+                var lastByte = Math.Min(position + CopyPartSizeBytes, size) - 1;
+                var part = await _s3.CopyPartAsync(new CopyPartRequest
+                {
+                    SourceBucket = _bucket,
+                    SourceKey = sourceKey,
+                    DestinationBucket = _bucket,
+                    DestinationKey = destKey,
+                    UploadId = initiated.UploadId,
+                    PartNumber = partNumber,
+                    FirstByte = position,
+                    LastByte = lastByte,
+                }, ct).ConfigureAwait(false);
+
+                parts.Add(new PartETag(partNumber, part.ETag));
+                position = lastByte + 1;
+            }
+
+            await _s3.CompleteMultipartUploadAsync(new CompleteMultipartUploadRequest
+            {
+                BucketName = _bucket,
+                Key = destKey,
+                UploadId = initiated.UploadId,
+                PartETags = parts,
+            }, ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Best-effort, and deliberately not on `ct`: if we got here by cancellation that token
+            // is already tripped, and the abort is exactly what still needs to run.
+            try
+            {
+                await _s3.AbortMultipartUploadAsync(new AbortMultipartUploadRequest
+                {
+                    BucketName = _bucket,
+                    Key = destKey,
+                    UploadId = initiated.UploadId,
+                }, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch { /* the orphaned upload also ages out via the bucket lifecycle rule */ }
+            throw;
+        }
+    }
+
     /// <summary>Server-side copy then delete of the source (an S3 "rename").</summary>
     public async Task MoveObjectAsync(string sourceKey, string destKey, CancellationToken ct = default)
     {
-        await _s3.CopyObjectAsync(new CopyObjectRequest
-        {
-            SourceBucket = _bucket,
-            SourceKey = sourceKey,
-            DestinationBucket = _bucket,
-            DestinationKey = destKey,
-        }, ct).ConfigureAwait(false);
+        await CopyObjectAsync(sourceKey, destKey, size: null, ct).ConfigureAwait(false);
         await DeleteObjectAsync(sourceKey, ct).ConfigureAwait(false);
     }
 
