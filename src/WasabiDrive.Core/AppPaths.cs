@@ -15,6 +15,9 @@ public static class AppPaths
     public static string CredentialsFile => Path.Combine(BaseDir, "credentials.dat");
     public static string LogsDir => Path.Combine(BaseDir, "logs");
 
+    /// <summary>Live rc endpoints of the current mounts; see <see cref="MountRuntimeStore"/>.</summary>
+    public static string MountRuntimeFile => Path.Combine(BaseDir, "mounts.runtime");
+
     public static void EnsureCreated()
     {
         Directory.CreateDirectory(BaseDir);

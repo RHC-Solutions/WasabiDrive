@@ -50,6 +50,17 @@ public sealed class MountManager : IAsyncDisposable
     public bool IsMounted(Guid mappingId) => GetState(mappingId) == MountState.Mounted;
 
     /// <summary>
+    /// The loopback rc endpoint of a live mount, or null when it is not mounted. Used to tell that
+    /// mount to drop a directory listing a direct-to-S3 bulk operation has just invalidated.
+    /// Re-read it after every transition to <see cref="MountState.Mounted"/>: a restarted mount
+    /// gets a new port.
+    /// </summary>
+    public RcEndpoint? GetRemoteControl(Guid mappingId) =>
+        _sessions.TryGetValue(mappingId, out var s) && s.State == MountState.Mounted
+            ? s.RemoteControl
+            : null;
+
+    /// <summary>
     /// Mounts <paramref name="mapping"/> using <paramref name="credentials"/> and returns once the
     /// drive is live (state <see cref="MountState.Mounted"/>) or throws on failure.
     /// </summary>
@@ -68,8 +79,12 @@ public sealed class MountManager : IAsyncDisposable
             throw new InvalidOperationException(
                 $"Drive {mapping.DriveTarget} is already in use by another volume.");
 
+        var endpoint = RcEndpoint.Allocate();
         var session = new MountSession(mapping, credentials,
-            new RcloneRunner(_rcloneExePath) { VerboseLogging = VerboseLogging });
+            new RcloneRunner(_rcloneExePath) { VerboseLogging = VerboseLogging, RemoteControl = endpoint })
+        {
+            RemoteControl = endpoint,
+        };
         _sessions[mapping.Id] = session;
 
         await StartSessionAsync(session, ct).ConfigureAwait(false);
@@ -134,7 +149,14 @@ public sealed class MountManager : IAsyncDisposable
         try
         {
             session.Runner.Dispose();
-            session.Runner = new RcloneRunner(_rcloneExePath) { VerboseLogging = VerboseLogging };
+            // A fresh rc port: the old one may have been taken while this mount was down. Callers
+            // re-read the endpoint when the mount reports Mounted again.
+            session.RemoteControl = RcEndpoint.Allocate();
+            session.Runner = new RcloneRunner(_rcloneExePath)
+            {
+                VerboseLogging = VerboseLogging,
+                RemoteControl = session.RemoteControl,
+            };
             await StartSessionAsync(session, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -210,6 +232,9 @@ public sealed class MountManager : IAsyncDisposable
         public Mapping Mapping { get; }
         public WasabiCredentials Credentials { get; }
         public RcloneRunner Runner { get; set; }
+
+        /// <summary>Loopback rc endpoint this mount's rclone is listening on.</summary>
+        public RcEndpoint? RemoteControl { get; set; }
         public MountState State { get; set; } = MountState.Unmounted;
         public string? LastError { get; set; }
         public int RestartCount { get; set; }

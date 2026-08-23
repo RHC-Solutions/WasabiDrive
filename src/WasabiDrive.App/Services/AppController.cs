@@ -19,6 +19,7 @@ public sealed class AppController
     private readonly MappingStore _mappingStore = new();
     private readonly CredentialStore _credentialStore = new();
     private readonly FileLogger _fileLogger = new();
+    private readonly MountRuntimeStore _mountRuntime = new();
 
     // Active on-demand (Cloud Files) folders, keyed by mapping id.
     private readonly Dictionary<Guid, OnDemandSyncManager> _onDemand = new();
@@ -64,6 +65,9 @@ public sealed class AppController
         AppPaths.EnsureCreated();
         Settings = _settingsStore.Load();
         _credentialStore.Load();
+
+        // Nothing is mounted yet, so any record left by a previous run (or a crash) is stale.
+        _mountRuntime.Clear();
 
         _fileLogger.Log($"--- WasabiDrive {AppInfo.CurrentVersionString} started ---");
 
@@ -253,6 +257,7 @@ public sealed class AppController
 
         if (_mountManager is not null)
             await _mountManager.UnmountAllAsync().ConfigureAwait(false);
+        _mountRuntime.Clear();
         _fileLogger.Log("--- WasabiDrive shutting down ---");
         _fileLogger.Dispose();
     }
@@ -293,7 +298,9 @@ public sealed class AppController
 
     public void PersistMappings() => _mappingStore.Save(Mappings.Select(m => m.Model));
 
-    private void OnStatusChanged(object? sender, MountStatusChangedEventArgs e) =>
+    private void OnStatusChanged(object? sender, MountStatusChangedEventArgs e)
+    {
+        PublishRuntimeEndpoint(e);
         RunOnUi(() =>
         {
             var vm = Mappings.FirstOrDefault(m => m.Model.Id == e.MappingId);
@@ -301,6 +308,28 @@ public sealed class AppController
             if (e.Message is not null)
                 AppendLog($"[{vm?.DriveTarget}] {e.State}: {e.Message}");
         });
+    }
+
+    /// <summary>
+    /// Keeps the on-disk record of live rc endpoints in step with the mounts. The Explorer
+    /// right-click bulk actions run in a separate short-lived process, which reads this to find
+    /// the running mount and refresh its directory cache once the bucket has changed.
+    /// </summary>
+    private void PublishRuntimeEndpoint(MountStatusChangedEventArgs e)
+    {
+        try
+        {
+            if (e.State == MountState.Mounted && _mountManager?.GetRemoteControl(e.MappingId) is { } endpoint)
+                _mountRuntime.Publish(e.MappingId, endpoint);
+            else if (e.State is MountState.Unmounted or MountState.Error)
+                _mountRuntime.Remove(e.MappingId);
+        }
+        catch
+        {
+            // Never let bookkeeping break a mount transition; a missing entry only costs the
+            // immediate cache refresh.
+        }
+    }
 
     private void OnLogReceived(object? sender, MountLogEventArgs e) =>
         RunOnUi(() => AppendLog(e.Line));

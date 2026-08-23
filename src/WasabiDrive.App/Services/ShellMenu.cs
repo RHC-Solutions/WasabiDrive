@@ -15,11 +15,17 @@ internal static class ShellMenu
     private const string MenuKeyName = "WasabiDrive";
     private static readonly string[] Classes = { "*", "Directory" };
 
-    private static readonly (string Sub, string Verb, string Label)[] Items =
+    /// <summary>
+    /// Menu entries in display order. <c>FoldersOnly</c> keeps the bulk operations off the "*"
+    /// (any file) class: they act on a whole prefix, so they only make sense on a folder.
+    /// </summary>
+    private static readonly (string Sub, string Verb, string Label, bool FoldersOnly)[] Items =
     {
-        ("01copylink", ShellCommand.CopyLinkVerb, "Copy WasabiDrive share link"),
-        ("02console",  ShellCommand.ConsoleVerb,  "Open in Wasabi console"),
-        ("03copypath", ShellCommand.CopyPathVerb, "Copy S3 path"),
+        ("01copylink",   ShellCommand.CopyLinkVerb,   "Copy WasabiDrive share link", false),
+        ("02console",    ShellCommand.ConsoleVerb,    "Open in Wasabi console",      false),
+        ("03copypath",   ShellCommand.CopyPathVerb,   "Copy S3 path",                false),
+        ("04bulkmove",   ShellCommand.BulkMoveVerb,   "Move on Wasabi…",             true),
+        ("05bulkdelete", ShellCommand.BulkDeleteVerb, "Delete on Wasabi…",           true),
     };
 
     /// <summary>
@@ -50,8 +56,10 @@ internal static class ShellMenu
                 // Remove any stale items first so re-registration is clean.
                 foreach (var existing in sub!.GetSubKeyNames()) sub.DeleteSubKeyTree(existing, false);
 
-                foreach (var (subName, verb, label) in Items)
+                foreach (var (subName, verb, label, foldersOnly) in Items)
                 {
+                    if (foldersOnly && !cls.Equals("Directory", StringComparison.Ordinal))
+                        continue;
                     using var item = sub.CreateSubKey(subName);
                     item!.SetValue("MUIVerb", label);
                     item.SetValue("Icon", icon);

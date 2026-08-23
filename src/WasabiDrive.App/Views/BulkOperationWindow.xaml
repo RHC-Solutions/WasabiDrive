@@ -1,0 +1,30 @@
+<Window x:Class="WasabiDrive.App.Views.BulkOperationWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:ui="http://schemas.modernwpf.com/2019"
+        mc:Ignorable="d"
+        ui:WindowHelper.UseModernWindowStyle="True"
+        Background="{StaticResource WC.Brush.BgPrimary}"
+        Title="WasabiDrive" Width="520" SizeToContent="Height" Icon="/Assets/wasabidrive.ico"
+        WindowStartupLocation="CenterScreen" ResizeMode="NoResize" ShowInTaskbar="True"
+        Closing="OnClosing">
+    <StackPanel Margin="20">
+        <TextBlock x:Name="HeadlineText" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap"/>
+
+        <TextBlock x:Name="PhaseText" Margin="0,12,0,0"
+                   Foreground="{StaticResource WC.Brush.TextSecondary}"/>
+
+        <ProgressBar x:Name="Bar" Height="6" Margin="0,8,0,0" IsIndeterminate="True" Minimum="0" Maximum="1"/>
+
+        <!-- Fixed height so the window doesn't jitter as key lengths change. -->
+        <TextBlock x:Name="DetailText" Margin="0,8,0,0" Height="34" TextWrapping="Wrap"
+                   TextTrimming="CharacterEllipsis" FontSize="11"
+                   Foreground="{StaticResource WC.Brush.TextSecondary}"/>
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button x:Name="ActionButton" Content="Cancel" Click="OnAction" Padding="18,6" MinWidth="90"/>
+        </StackPanel>
+    </StackPanel>
+</Window>
