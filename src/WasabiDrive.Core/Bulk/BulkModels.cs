@@ -21,16 +21,27 @@ public enum BulkPhase
 /// treat the operation as finished when <see cref="Phase"/> is <see cref="BulkPhase.Completed"/>,
 /// not when the two counts meet.
 /// </summary>
+/// <param name="ListingComplete">
+/// True once enumeration has finished, which is the point at which <see cref="ObjectsFound"/>
+/// stops moving and a completion ratio starts meaning something.
+/// </param>
 public sealed record BulkProgress(
     BulkPhase Phase,
     long ObjectsFound,
     long ObjectsDone,
     long BytesFound,
     long BytesDone,
-    string? CurrentKey)
+    string? CurrentKey,
+    bool ListingComplete = false)
 {
-    /// <summary>Completion ratio against what has been listed so far, or null before anything is found.</summary>
-    public double? Fraction => ObjectsFound <= 0 ? null : Math.Min(1.0, (double)ObjectsDone / ObjectsFound);
+    /// <summary>
+    /// Completion ratio, or null while it would be misleading. A ratio taken mid-listing slides
+    /// backwards as the denominator grows, which reads as progress being lost, so this stays null
+    /// until <see cref="ListingComplete"/>.
+    /// </summary>
+    public double? Fraction => !ListingComplete || ObjectsFound <= 0
+        ? null
+        : Math.Min(1.0, (double)ObjectsDone / ObjectsFound);
 }
 
 /// <summary>One object that could not be copied or deleted. The rest of the batch still ran.</summary>

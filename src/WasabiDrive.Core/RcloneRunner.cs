@@ -24,6 +24,13 @@ public sealed class RcloneRunner : IDisposable
     /// <summary>When true, the mount runs at DEBUG log level (verbose troubleshooting).</summary>
     public bool VerboseLogging { get; set; }
 
+    /// <summary>
+    /// When set, the mount exposes rclone's remote-control API on this loopback endpoint so the
+    /// app can invalidate its directory cache after changing the bucket directly. Must be assigned
+    /// before <see cref="Start"/>.
+    /// </summary>
+    public RcEndpoint? RemoteControl { get; set; }
+
     /// <summary>Raised for each line rclone writes to its log (stderr/stdout).</summary>
     public event Action<string>? LogLineReceived;
 
@@ -36,7 +43,8 @@ public sealed class RcloneRunner : IDisposable
     /// Translates a mapping's cache settings into an rclone <c>mount</c> argument list.
     /// Kept static and pure so it can be unit-tested without launching a process.
     /// </summary>
-    public static IReadOnlyList<string> BuildMountArguments(Mapping mapping, bool verbose = false)
+    public static IReadOnlyList<string> BuildMountArguments(
+        Mapping mapping, bool verbose = false, RcEndpoint? remoteControl = null)
     {
         ArgumentNullException.ThrowIfNull(mapping);
         var c = mapping.Cache;
@@ -83,7 +91,37 @@ public sealed class RcloneRunner : IDisposable
             args.Add(c.CacheDir!.Trim());
         }
 
+        if (remoteControl is not null)
+        {
+            // The remote-control server lets the app invalidate this mount's directory cache after
+            // a bulk operation has changed the bucket behind its back. Bound to loopback, and
+            // authenticated: the rc API can drive the mount and read back its config, so it must
+            // not be reachable by anything else — see <see cref="RcEndpoint"/>.
+            //
+            // Only the address goes on the command line. The credentials travel as environment
+            // variables (see <see cref="BuildRemoteControlEnvironment"/>) for the same reason the
+            // Wasabi secret does: the command line of a running process is readable by anyone.
+            args.Add("--rc");
+            args.Add("--rc-addr");
+            args.Add($"127.0.0.1:{remoteControl.Port}");
+        }
+
         return args;
+    }
+
+    /// <summary>
+    /// The rc credentials as rclone flag-override environment variables, keeping them off the
+    /// command line. rclone maps <c>RCLONE_RC_USER</c>/<c>RCLONE_RC_PASS</c> onto
+    /// <c>--rc-user</c>/<c>--rc-pass</c>.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> BuildRemoteControlEnvironment(RcEndpoint endpoint)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+        return new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["RCLONE_RC_USER"] = endpoint.User,
+            ["RCLONE_RC_PASS"] = endpoint.Password,
+        };
     }
 
     /// <summary>
@@ -166,10 +204,15 @@ public sealed class RcloneRunner : IDisposable
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };
-        foreach (var arg in BuildMountArguments(mapping, VerboseLogging))
+        foreach (var arg in BuildMountArguments(mapping, VerboseLogging, RemoteControl))
             psi.ArgumentList.Add(arg);
         foreach (var kv in remoteEnv)
             psi.Environment[kv.Key] = kv.Value;
+        if (RemoteControl is not null)
+        {
+            foreach (var kv in BuildRemoteControlEnvironment(RemoteControl))
+                psi.Environment[kv.Key] = kv.Value;
+        }
 
         _process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         _process.OutputDataReceived += (_, e) => { if (e.Data != null) LogLineReceived?.Invoke(e.Data); };

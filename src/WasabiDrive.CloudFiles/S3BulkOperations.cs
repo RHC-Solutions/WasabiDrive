@@ -212,11 +212,20 @@ public sealed class S3BulkOperations
         BulkPhase phase,
         [EnumeratorCancellation] CancellationToken ct)
     {
-        await foreach (var entry in source.WithCancellation(ct).ConfigureAwait(false))
+        try
         {
-            tally.AddFound(1, entry.Size);
-            pump.Report(phase, tally, entry.Key);
-            yield return entry;
+            await foreach (var entry in source.WithCancellation(ct).ConfigureAwait(false))
+            {
+                tally.AddFound(1, entry.Size);
+                pump.Report(phase, tally, entry.Key);
+                yield return entry;
+            }
+        }
+        finally
+        {
+            // Also runs when the consumer stops early or cancels: from here on the found count is
+            // final, which is what lets the UI show a real completion ratio.
+            tally.MarkListingComplete();
         }
     }
 
@@ -295,12 +304,16 @@ public sealed class S3BulkOperations
     {
         private readonly ConcurrentQueue<BulkFailure> _failures = new();
         private long _found, _bytesFound, _copied, _bytesCopied, _deleted;
+        private bool _listingComplete;
 
         public long Found => Interlocked.Read(ref _found);
         public long BytesFound => Interlocked.Read(ref _bytesFound);
         public long Copied => Interlocked.Read(ref _copied);
         public long BytesCopied => Interlocked.Read(ref _bytesCopied);
         public long Deleted => Interlocked.Read(ref _deleted);
+        public bool ListingComplete => Volatile.Read(ref _listingComplete);
+
+        public void MarkListingComplete() => Volatile.Write(ref _listingComplete, true);
 
         public void AddFound(long count, long bytes)
         {
@@ -369,6 +382,7 @@ public sealed class S3BulkOperations
                 phase == BulkPhase.Copying ? tally.Copied : tally.Deleted,
                 tally.BytesFound,
                 tally.BytesCopied,
-                currentKey));
+                currentKey,
+                tally.ListingComplete));
     }
 }
