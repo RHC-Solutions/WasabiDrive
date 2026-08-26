@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
@@ -16,7 +17,11 @@ namespace WasabiDrive.CloudFiles;
 /// no disk space until opened, and Explorer shows the native status column, overlays, and the
 /// "Always keep on this device" / "Free up space" menu items.
 ///
-/// One-way (read) for this milestone: it does not upload local changes.
+/// Directories are populated on demand as well as hydrated on demand. A folder starts life as a
+/// bare directory placeholder holding nothing but its own name; the first time anything enumerates
+/// it, Windows raises FETCH_PLACEHOLDERS and we list exactly that one prefix. Folders the user
+/// never opens are never listed, so memory and request count track what is actually looked at
+/// rather than the size of the bucket.
 /// </summary>
 public sealed class CloudFilesProvider : IDisposable
 {
@@ -28,11 +33,33 @@ public sealed class CloudFilesProvider : IDisposable
     private readonly Func<string, long, long, CancellationToken, Task<Stream>> _openRead;
     private readonly Action<string>? _log;
 
-    // The delegate must be kept alive for the whole connection or the GC will collect the thunk
+    // The delegates must be kept alive for the whole connection or the GC will collect the thunks
     // that Windows calls back into.
-    private CF_CALLBACK? _fetchCallback;
+    private CF_CALLBACK? _fetchDataCallback;
+    private CF_CALLBACK? _fetchPlaceholdersCallback;
+    private CF_CALLBACK? _cancelFetchPlaceholdersCallback;
     private CF_CONNECTION_KEY _connectionKey;
     private bool _connected;
+
+    /// <summary>
+    /// In-flight directory enumerations, keyed by transfer key, so CANCEL_FETCH_PLACEHOLDERS can
+    /// abandon a listing when the user closes the folder before it finishes.
+    /// </summary>
+    private readonly ConcurrentDictionary<long, CancellationTokenSource> _directoryFetches = new();
+
+    /// <summary>
+    /// Supplies the immediate contents of one bucket "directory" — the files directly under the
+    /// given prefix plus its sub-folders. Set by the owner before <see cref="Connect"/>; when it is
+    /// null, directories are left as-is (whatever was eagerly created stays, nothing is fetched).
+    /// </summary>
+    public Func<string, CancellationToken, Task<IReadOnlyList<PlaceholderInfo>>>? DirectorySource { get; set; }
+
+    /// <summary>
+    /// The bucket prefix the sync root maps to ("" for the whole bucket, otherwise ending in "/").
+    /// Used to rebuild a directory's prefix from its path when it carries no file identity of its
+    /// own — the sync root itself, and any folder the user created locally.
+    /// </summary>
+    public string RootPrefix { get; set; } = string.Empty;
 
     /// <param name="syncRootPath">Local folder to register as the sync root.</param>
     /// <param name="providerId">Stable per-mapping provider GUID.</param>
@@ -76,9 +103,13 @@ public sealed class CloudFilesProvider : IDisposable
         Directory.CreateDirectory(_syncRootPath);
 
         var version = "1.0";
+        // The root's own file identity is the prefix it maps to, so a FETCH_PLACEHOLDERS raised
+        // against the root resolves the same way as one raised against any sub-folder.
+        var rootIdentity = Encoding.UTF8.GetBytes(RootPrefix);
         fixed (char* pName = ProviderName)
         fixed (char* pVersion = version)
         fixed (byte* pIdentity = _syncRootIdentity)
+        fixed (byte* pRootFileIdentity = rootIdentity)
         {
             var registration = new CF_SYNC_REGISTRATION
             {
@@ -87,6 +118,8 @@ public sealed class CloudFilesProvider : IDisposable
                 ProviderVersion = pVersion,
                 SyncRootIdentity = pIdentity,
                 SyncRootIdentityLength = (uint)_syncRootIdentity.Length,
+                FileIdentity = pRootFileIdentity,
+                FileIdentityLength = (uint)rootIdentity.Length,
                 ProviderId = _providerId,
             };
 
@@ -98,7 +131,13 @@ public sealed class CloudFilesProvider : IDisposable
                     Primary = CF_HYDRATION_POLICY_PRIMARY.CF_HYDRATION_POLICY_FULL,
                     Modifier = CF_HYDRATION_POLICY_MODIFIER.CF_HYDRATION_POLICY_MODIFIER_AUTO_DEHYDRATION_ALLOWED,
                 },
-                // We eagerly create the whole namespace, so no on-demand placeholder population.
+                // FULL means this provider owns the namespace and is responsible for filling it in
+                // — not that it has to be filled in up front. Whether a given directory is
+                // enumerated on demand is decided per placeholder: a directory placeholder created
+                // without CF_PLACEHOLDER_CREATE_FLAG_DISABLE_ON_DEMAND_POPULATION stays empty until
+                // something opens it, and Windows then asks us for its contents.
+                // (CF_POPULATION_POLICY_PARTIAL, the obvious-looking choice, is documented as not
+                // supported.)
                 Population = new CF_POPULATION_POLICY
                 {
                     Primary = CF_POPULATION_POLICY_PRIMARY.CF_POPULATION_POLICY_FULL,
@@ -118,13 +157,26 @@ public sealed class CloudFilesProvider : IDisposable
     {
         if (_connected) return;
 
-        _fetchCallback = OnFetchData;
+        _fetchDataCallback = OnFetchData;
+        _fetchPlaceholdersCallback = OnFetchPlaceholders;
+        _cancelFetchPlaceholdersCallback = OnCancelFetchPlaceholders;
         var callbacks = new[]
         {
             new CF_CALLBACK_REGISTRATION
             {
                 Type = CF_CALLBACK_TYPE.CF_CALLBACK_TYPE_FETCH_DATA,
-                Callback = _fetchCallback,
+                Callback = _fetchDataCallback,
+            },
+            // Raised when something enumerates a directory placeholder we left unpopulated.
+            new CF_CALLBACK_REGISTRATION
+            {
+                Type = CF_CALLBACK_TYPE.CF_CALLBACK_TYPE_FETCH_PLACEHOLDERS,
+                Callback = _fetchPlaceholdersCallback,
+            },
+            new CF_CALLBACK_REGISTRATION
+            {
+                Type = CF_CALLBACK_TYPE.CF_CALLBACK_TYPE_CANCEL_FETCH_PLACEHOLDERS,
+                Callback = _cancelFetchPlaceholdersCallback,
             },
             new CF_CALLBACK_REGISTRATION
             {
@@ -147,9 +199,20 @@ public sealed class CloudFilesProvider : IDisposable
     public void Disconnect()
     {
         if (!_connected) return;
+
+        // Abandon any directory listing still in flight before the connection goes away; its
+        // CfExecute would fail against a dead connection key anyway. Each listing removes and
+        // disposes its own token source as it unwinds, so cancelling is all that is needed here.
+        foreach (var cts in _directoryFetches.Values)
+        {
+            try { cts.Cancel(); } catch { /* already completing */ }
+        }
+
         PInvoke.CfDisconnectSyncRoot(_connectionKey);
         _connected = false;
-        _fetchCallback = null;
+        _fetchDataCallback = null;
+        _fetchPlaceholdersCallback = null;
+        _cancelFetchPlaceholdersCallback = null;
     }
 
     /// <summary>Removes the sync-root registration (does not delete local files).</summary>
@@ -161,8 +224,9 @@ public sealed class CloudFilesProvider : IDisposable
     }
 
     /// <summary>
-    /// Creates file placeholders in <paramref name="relativeDir"/> (relative to the sync root).
-    /// Directories are created as real folders first so nested keys land in the right place.
+    /// Creates placeholders in <paramref name="relativeDir"/> (relative to the sync root). Entries
+    /// marked <see cref="PlaceholderInfo.IsDirectory"/> become directory placeholders that stay
+    /// empty until something enumerates them; the rest become cloud-only file placeholders.
     /// </summary>
     public unsafe int CreatePlaceholders(string relativeDir, IReadOnlyList<PlaceholderInfo> files)
     {
@@ -176,39 +240,7 @@ public sealed class CloudFilesProvider : IDisposable
         var allocations = new List<IntPtr>(files.Count * 2);
         try
         {
-            var infos = new CF_PLACEHOLDER_CREATE_INFO[files.Count];
-            for (var i = 0; i < files.Count; i++)
-            {
-                var f = files[i];
-                var namePtr = Marshal.StringToHGlobalUni(f.FileName);
-                allocations.Add(namePtr);
-
-                var identityBytes = Encoding.UTF8.GetBytes(f.FileIdentity);
-                var idPtr = Marshal.AllocHGlobal(identityBytes.Length);
-                Marshal.Copy(identityBytes, 0, idPtr, identityBytes.Length);
-                allocations.Add(idPtr);
-
-                infos[i] = new CF_PLACEHOLDER_CREATE_INFO
-                {
-                    RelativeFileName = (char*)namePtr,
-                    FsMetadata = new CF_FS_METADATA
-                    {
-                        FileSize = f.Size,
-                        BasicInfo = new FILE_BASIC_INFO
-                        {
-                            CreationTime = f.LastModifiedUtc.ToFileTimeUtc(),
-                            LastWriteTime = f.LastModifiedUtc.ToFileTimeUtc(),
-                            ChangeTime = f.LastModifiedUtc.ToFileTimeUtc(),
-                            LastAccessTime = f.LastModifiedUtc.ToFileTimeUtc(),
-                            FileAttributes = (uint)FileAttributes.Normal,
-                        },
-                    },
-                    FileIdentity = (void*)idPtr,
-                    FileIdentityLength = (uint)identityBytes.Length,
-                    Flags = CF_PLACEHOLDER_CREATE_FLAGS.CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC,
-                };
-            }
-
+            var infos = BuildCreateInfos(files, allocations);
             uint processed;
             PInvoke.CfCreatePlaceholders(baseDir, infos, CF_CREATE_FLAGS.CF_CREATE_FLAG_NONE, &processed)
                 .ThrowOnFailure();
@@ -218,6 +250,55 @@ public sealed class CloudFilesProvider : IDisposable
         {
             foreach (var p in allocations) Marshal.FreeHGlobal(p);
         }
+    }
+
+    /// <summary>
+    /// Marshals placeholder entries into the native array cfapi wants. The unmanaged name and
+    /// identity buffers are recorded in <paramref name="allocations"/> for the caller to free once
+    /// the native call has returned — they must stay alive for its whole duration.
+    /// </summary>
+    private static unsafe CF_PLACEHOLDER_CREATE_INFO[] BuildCreateInfos(
+        IReadOnlyList<PlaceholderInfo> files, List<IntPtr> allocations)
+    {
+        var infos = new CF_PLACEHOLDER_CREATE_INFO[files.Count];
+        for (var i = 0; i < files.Count; i++)
+        {
+            var f = files[i];
+            var namePtr = Marshal.StringToHGlobalUni(f.FileName);
+            allocations.Add(namePtr);
+
+            var identityBytes = Encoding.UTF8.GetBytes(f.FileIdentity);
+            var idPtr = Marshal.AllocHGlobal(Math.Max(1, identityBytes.Length));
+            Marshal.Copy(identityBytes, 0, idPtr, identityBytes.Length);
+            allocations.Add(idPtr);
+
+            var stamp = f.LastModifiedUtc.ToFileTimeUtc();
+            infos[i] = new CF_PLACEHOLDER_CREATE_INFO
+            {
+                RelativeFileName = (char*)namePtr,
+                FsMetadata = new CF_FS_METADATA
+                {
+                    FileSize = f.IsDirectory ? 0 : f.Size,
+                    BasicInfo = new FILE_BASIC_INFO
+                    {
+                        CreationTime = stamp,
+                        LastWriteTime = stamp,
+                        ChangeTime = stamp,
+                        LastAccessTime = stamp,
+                        FileAttributes = (uint)(f.IsDirectory
+                            ? FileAttributes.Directory
+                            : FileAttributes.Normal),
+                    },
+                },
+                FileIdentity = (void*)idPtr,
+                FileIdentityLength = (uint)identityBytes.Length,
+                // Deliberately no CF_PLACEHOLDER_CREATE_FLAG_DISABLE_ON_DEMAND_POPULATION: that is
+                // exactly the flag that would force a directory to be filled in up front. Leaving
+                // it off is what makes a folder wait to be opened before it is listed.
+                Flags = CF_PLACEHOLDER_CREATE_FLAGS.CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC,
+            };
+        }
+        return infos;
     }
 
     /// <summary>Pins ("Always keep on this device") or unpins a hydrated/placeholder file.</summary>
@@ -285,6 +366,161 @@ public sealed class CloudFilesProvider : IDisposable
         // Service the transfer off the callback thread (S3 I/O must not block the filter callback).
         _ = Task.Run(() => HydrateAsync(connectionKey, transferKey, key, offset, length));
     }
+
+    /// <summary>
+    /// Cloud Files FETCH_PLACEHOLDERS callback: something is enumerating a directory placeholder we
+    /// left unpopulated, so Windows is asking what is inside it. This is the whole point of the
+    /// lazy design — it fires once per folder the user actually opens.
+    /// </summary>
+    private unsafe void OnFetchPlaceholders(
+        CF_CALLBACK_INFO* callbackInfo, CF_CALLBACK_PARAMETERS* callbackParameters)
+    {
+        var connectionKey = callbackInfo->ConnectionKey;
+        long transferKey = callbackInfo->TransferKey;
+        var prefix = DirectoryPrefixFor(callbackInfo);
+
+        var source = DirectorySource;
+        if (source is null)
+        {
+            // Report an empty but complete directory rather than leaving Explorer blocked on a
+            // transfer nobody is going to answer.
+            TransferPlaceholders(connectionKey, transferKey, Array.Empty<PlaceholderInfo>(), NtStatusSuccess);
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        _directoryFetches[transferKey] = cts;
+        _ = Task.Run(() => PopulateDirectoryAsync(connectionKey, transferKey, prefix, source, cts));
+    }
+
+    /// <summary>
+    /// Cloud Files CANCEL_FETCH_PLACEHOLDERS callback: the enumeration was abandoned (the folder
+    /// was closed, or the request timed out). Stop listing rather than finishing a listing whose
+    /// result nobody will read.
+    /// </summary>
+    private unsafe void OnCancelFetchPlaceholders(
+        CF_CALLBACK_INFO* callbackInfo, CF_CALLBACK_PARAMETERS* callbackParameters)
+    {
+        long transferKey = callbackInfo->TransferKey;
+        if (_directoryFetches.TryGetValue(transferKey, out var cts))
+        {
+            try { cts.Cancel(); } catch { /* already completing */ }
+        }
+    }
+
+    private async Task PopulateDirectoryAsync(
+        CF_CONNECTION_KEY connectionKey,
+        long transferKey,
+        string prefix,
+        Func<string, CancellationToken, Task<IReadOnlyList<PlaceholderInfo>>> source,
+        CancellationTokenSource cts)
+    {
+        try
+        {
+            var entries = await source(prefix, cts.Token).ConfigureAwait(false);
+            TransferPlaceholders(connectionKey, transferKey, entries, NtStatusSuccess);
+        }
+        catch (OperationCanceledException)
+        {
+            TransferPlaceholders(connectionKey, transferKey, Array.Empty<PlaceholderInfo>(), NtStatusCancelled);
+        }
+        catch (Exception ex)
+        {
+            _log?.Invoke($"Listing '{(prefix.Length == 0 ? "/" : prefix)}' failed: {ex.Message}");
+            TransferPlaceholders(connectionKey, transferKey, Array.Empty<PlaceholderInfo>(), NtStatusIoDeviceError);
+        }
+        finally
+        {
+            if (_directoryFetches.TryRemove(transferKey, out var finished)) finished.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Answers an in-flight FETCH_PLACEHOLDERS with a directory's contents. Failures are logged
+    /// rather than thrown: this runs on a detached task, and an escaping exception would take the
+    /// process down while leaving Explorer waiting anyway.
+    /// </summary>
+    private unsafe void TransferPlaceholders(
+        CF_CONNECTION_KEY connectionKey, long transferKey,
+        IReadOnlyList<PlaceholderInfo> entries, int completionStatus)
+    {
+        var allocations = new List<IntPtr>(entries.Count * 2);
+        try
+        {
+            var infos = entries.Count == 0
+                ? Array.Empty<CF_PLACEHOLDER_CREATE_INFO>()
+                : BuildCreateInfos(entries, allocations);
+
+            fixed (CF_PLACEHOLDER_CREATE_INFO* pInfos = infos)
+            {
+                var opInfo = new CF_OPERATION_INFO
+                {
+                    StructSize = (uint)sizeof(CF_OPERATION_INFO),
+                    Type = CF_OPERATION_TYPE.CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS,
+                    ConnectionKey = connectionKey,
+                    TransferKey = transferKey,
+                };
+                var opParams = new CF_OPERATION_PARAMETERS { ParamSize = TransferPlaceholdersParamSize };
+                // DISABLE_ON_DEMAND_POPULATION here means "this directory is now complete": Windows
+                // records the contents on disk and serves later enumerations itself, so re-opening
+                // the folder costs no request at all until the reconcile refreshes it.
+                opParams.Anonymous.TransferPlaceholders.Flags =
+                    CF_OPERATION_TRANSFER_PLACEHOLDERS_FLAGS.CF_OPERATION_TRANSFER_PLACEHOLDERS_FLAG_DISABLE_ON_DEMAND_POPULATION;
+                opParams.Anonymous.TransferPlaceholders.CompletionStatus = new NTSTATUS(completionStatus);
+                opParams.Anonymous.TransferPlaceholders.PlaceholderTotalCount = entries.Count;
+                opParams.Anonymous.TransferPlaceholders.PlaceholderArray = pInfos;
+                opParams.Anonymous.TransferPlaceholders.PlaceholderCount = (uint)infos.Length;
+                opParams.Anonymous.TransferPlaceholders.EntriesProcessed = 0;
+
+                PInvoke.CfExecute(opInfo, ref opParams).ThrowOnFailure();
+
+                var processed = opParams.Anonymous.TransferPlaceholders.EntriesProcessed;
+                if (infos.Length > 0 && processed < infos.Length)
+                    _log?.Invoke(
+                        $"Directory listing partially accepted: {processed} of {infos.Length} entries.");
+            }
+        }
+        catch (Exception ex)
+        {
+            _log?.Invoke($"Transferring a directory listing failed: {ex.Message}");
+        }
+        finally
+        {
+            foreach (var p in allocations) Marshal.FreeHGlobal(p);
+        }
+    }
+
+    /// <summary>
+    /// The bucket prefix a callback refers to. The file identity we stamped onto the directory
+    /// placeholder is the prefix itself, which makes this exact; the path fallback covers the two
+    /// cases that have no identity of ours — the sync root, and folders the user created locally.
+    /// </summary>
+    private unsafe string DirectoryPrefixFor(CF_CALLBACK_INFO* info)
+    {
+        if (info->FileIdentity != null && info->FileIdentityLength > 0)
+            return Encoding.UTF8.GetString((byte*)info->FileIdentity, (int)info->FileIdentityLength);
+
+        var normalized = info->NormalizedPath.ToString() ?? string.Empty;
+        // CF_CONNECT_FLAG_REQUIRE_FULL_FILE_PATH gives a volume-absolute path, which may or may not
+        // already carry the drive letter; VolumeDosName supplies it when it doesn't.
+        var full = normalized.Length > 1 && normalized[1] == ':'
+            ? normalized
+            : (info->VolumeDosName.ToString() ?? string.Empty) + normalized;
+
+        string relative;
+        try { relative = Path.GetRelativePath(_syncRootPath, full); }
+        catch { return RootPrefix; }
+
+        if (relative == "." || relative.StartsWith("..", StringComparison.Ordinal))
+            return RootPrefix;
+
+        var sub = relative.Replace(Path.DirectorySeparatorChar, '/').Trim('/');
+        return sub.Length == 0 ? RootPrefix : RootPrefix + sub + "/";
+    }
+
+    private const int NtStatusSuccess = 0;
+    private const int NtStatusCancelled = unchecked((int)0xC0000120);    // STATUS_CANCELLED
+    private const int NtStatusIoDeviceError = unchecked((int)0xC0000185); // STATUS_IO_DEVICE_ERROR
 
     /// <summary>Size of each parallel hydration range request. A multiple of the sector size.</summary>
     private const int HydrationChunkSizeBytes = 4 << 20; // 4 MiB
@@ -434,12 +670,25 @@ public sealed class CloudFilesProvider : IDisposable
         (uint)Marshal.OffsetOf<CF_OPERATION_PARAMETERS>(nameof(CF_OPERATION_PARAMETERS.Anonymous))
         + (uint)Marshal.SizeOf<CF_OPERATION_PARAMETERS._Anonymous_e__Union._TransferData_e__Struct>();
 
+    // Likewise for TRANSFER_PLACEHOLDERS, whose union member is a different size.
+    private static readonly uint TransferPlaceholdersParamSize =
+        (uint)Marshal.OffsetOf<CF_OPERATION_PARAMETERS>(nameof(CF_OPERATION_PARAMETERS.Anonymous))
+        + (uint)Marshal.SizeOf<CF_OPERATION_PARAMETERS._Anonymous_e__Union._TransferPlaceholders_e__Struct>();
+
     public void Dispose() => Disconnect();
 }
 
-/// <summary>Data needed to create one file placeholder.</summary>
-/// <param name="FileName">Leaf file name within its directory.</param>
-/// <param name="FileIdentity">Opaque identity we get back on hydration (the full S3 key).</param>
-/// <param name="Size">File size in bytes.</param>
+/// <summary>Data needed to create one placeholder.</summary>
+/// <param name="FileName">Leaf name within its directory.</param>
+/// <param name="FileIdentity">
+/// Opaque identity handed back to us later: the full S3 key for a file, the directory's prefix
+/// (ending in "/") for a directory.
+/// </param>
+/// <param name="Size">File size in bytes; ignored for directories.</param>
 /// <param name="LastModifiedUtc">Last-modified timestamp.</param>
-public sealed record PlaceholderInfo(string FileName, string FileIdentity, long Size, DateTime LastModifiedUtc);
+/// <param name="IsDirectory">
+/// True for a sub-folder. Directory placeholders are created empty and populated only when
+/// something enumerates them.
+/// </param>
+public sealed record PlaceholderInfo(
+    string FileName, string FileIdentity, long Size, DateTime LastModifiedUtc, bool IsDirectory = false);

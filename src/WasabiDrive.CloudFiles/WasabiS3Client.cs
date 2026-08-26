@@ -14,6 +14,14 @@ namespace WasabiDrive.CloudFiles;
 public sealed record S3ObjectEntry(string Key, long Size, DateTime LastModifiedUtc, string? ETag);
 
 /// <summary>
+/// One page of a single-level (delimited) listing.
+/// </summary>
+/// <param name="Files">Objects directly under the listed prefix.</param>
+/// <param name="SubPrefixes">Child prefixes that act as sub-folders (each ends in "/").</param>
+public sealed record S3DirectoryPage(
+    IReadOnlyList<S3ObjectEntry> Files, IReadOnlyList<string> SubPrefixes);
+
+/// <summary>
 /// Thin wrapper over the AWS S3 SDK pointed at a Wasabi region endpoint. Used by the Cloud Files
 /// provider to enumerate objects (to build placeholders) and to range-read object bytes on
 /// hydration. Read-only for the one-way milestone.
@@ -84,6 +92,52 @@ public sealed class WasabiS3Client : IDisposable
             response = await _s3.ListObjectsV2Async(request, ct).ConfigureAwait(false);
             foreach (var o in response.S3Objects)
                 yield return new S3ObjectEntry(o.Key, o.Size, o.LastModified.ToUniversalTime(), o.ETag);
+            request.ContinuationToken = response.NextContinuationToken;
+        }
+        while (response.IsTruncated);
+    }
+
+    /// <summary>
+    /// Enumerates ONE level of the bucket's pseudo-directory tree: the objects sitting directly
+    /// under <paramref name="prefix"/>, plus the child prefixes that behave as sub-folders.
+    ///
+    /// This is the listing the on-demand folder is built on. Asking S3 for a delimiter means the
+    /// server does the grouping and returns a folder's worth of keys instead of a subtree's worth,
+    /// so opening a folder costs one request per 1000 entries in that folder and nothing at all
+    /// for the folders the user never opens.
+    ///
+    /// Pages are yielded as they arrive rather than accumulated: a directory that happens to hold
+    /// hundreds of thousands of keys then streams through in constant memory instead of being
+    /// gathered into one list first.
+    /// </summary>
+    /// <param name="prefix">Directory prefix, "" for the bucket root, otherwise ending in "/".</param>
+    public async IAsyncEnumerable<S3DirectoryPage> ListDirectoryAsync(
+        string prefix,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var request = new ListObjectsV2Request
+        {
+            BucketName = _bucket,
+            Prefix = string.IsNullOrEmpty(prefix) ? null : prefix,
+            Delimiter = "/",
+            MaxKeys = 1000,
+        };
+
+        ListObjectsV2Response response;
+        do
+        {
+            response = await _s3.ListObjectsV2Async(request, ct).ConfigureAwait(false);
+
+            var files = new List<S3ObjectEntry>(response.S3Objects.Count);
+            foreach (var o in response.S3Objects)
+            {
+                // The directory marker object for this very prefix is not a child of it.
+                if (string.Equals(o.Key, prefix, StringComparison.Ordinal)) continue;
+                files.Add(new S3ObjectEntry(o.Key, o.Size, o.LastModified.ToUniversalTime(), o.ETag));
+            }
+
+            yield return new S3DirectoryPage(files, response.CommonPrefixes ?? new List<string>());
+
             request.ContinuationToken = response.NextContinuationToken;
         }
         while (response.IsTruncated);

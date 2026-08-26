@@ -165,7 +165,7 @@ internal sealed class LocalChangeSyncer : IDisposable
         // exact object and every tracked object beneath it (folder cascade).
         var childPrefix = key + "/";
         var keysToDelete = new List<string> { key };
-        keysToDelete.AddRange(_state.Keys.Where(k => k.StartsWith(childPrefix, StringComparison.Ordinal)));
+        keysToDelete.AddRange(_state.KeysWithPrefix(childPrefix));
 
         _ = Task.Run(async () =>
         {
@@ -180,8 +180,10 @@ internal sealed class LocalChangeSyncer : IDisposable
 
                 // Only forget the keys that actually went; the rest stay tracked so they aren't
                 // silently orphaned in the bucket.
-                foreach (var k in result.Deleted)
-                    _state.Remove(k);
+                _state.RemoveMany(result.Deleted);
+                // The folder is gone locally, so its listing is stale. Only the listing goes: any
+                // key the server refused to delete must stay tracked rather than be forgotten.
+                _state.ForgetDirectoryListings(childPrefix);
 
                 if (result.Deleted.Count == 1)
                     _log?.Invoke($"Deleted {result.Deleted[0]}");
@@ -206,8 +208,13 @@ internal sealed class LocalChangeSyncer : IDisposable
         if (!isDirectory) moves.Add((oldKey, newKey));
         var oldPrefix = oldKey + "/";
         var newPrefix = newKey + "/";
-        foreach (var k in _state.Keys.Where(k => k.StartsWith(oldPrefix, StringComparison.Ordinal)))
+        foreach (var k in _state.KeysWithPrefix(oldPrefix))
             moves.Add((k, newPrefix + k[oldPrefix.Length..]));
+
+        // The old prefix no longer names a folder, so its listing record goes — but not the entries
+        // under it, which the moves below still need to look up. The renamed folder re-lists itself
+        // under its new prefix the next time it is opened.
+        if (isDirectory) _state.ForgetDirectoryListings(oldPrefix);
 
         _ = Task.Run(async () =>
         {

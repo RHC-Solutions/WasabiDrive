@@ -83,7 +83,9 @@ The installer bundles `rclone.exe`, installs WinFsp if absent, and creates short
   - **Files On-Demand folder** — a normal folder backed by the **Windows Cloud Files API**, just
     like OneDrive: files show in Explorer as placeholders, download only when opened, and support
     the native **Status** column/overlays and the **"Always keep on this device" / "Free up space"**
-    right-click menu. Idle files are freed automatically (Storage Sense + a built-in policy using
+    right-click menu. **Folders are listed on demand too** — mounting lists one level, and each
+    folder lists itself the first time it is opened, so memory and request count follow what you
+    actually browse rather than how many objects the bucket holds. Idle files are freed automatically (Storage Sense + a built-in policy using
     the mapping's *cache max age*). **Two-way sync**: local edits, new files, deletes and renames
     (with folder cascades) are pushed back to Wasabi; a periodic pull brings remote changes down,
     with etag/size change detection, last-writer-wins conflict logging, and retry/backoff. The

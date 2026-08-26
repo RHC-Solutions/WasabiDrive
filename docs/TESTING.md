@@ -16,8 +16,9 @@ a real desktop with real Wasabi credentials. Tick each box; note anything that m
 `%LOCALAPPDATA%\WasabiDrive\logs\wasabidrive-YYYY-MM-DD.log`. Open the folder from
 **Settings → Open logs folder**.
 
-Sync state (for on-demand) lives at `%LOCALAPPDATA%\WasabiDrive\sync\<mappingId>.json` — deleting it
-forces a full re-scan.
+Sync state (for on-demand) lives at `%LOCALAPPDATA%\WasabiDrive\sync\<mappingId>.db` (SQLite;
+pre-0.9 `.json` files are imported once and left behind as `.json.migrated`) — deleting it forces a
+re-scan of the folders you open.
 
 ---
 
@@ -36,7 +37,12 @@ forces a full re-scan.
 
 - [ ] Add a mapping, **Mode = On-demand folder**, same bucket, enter keys, Mount.
       The chosen folder opens in Explorer.
-- [ ] Files/sub-folders from the bucket appear. Log shows `N placeholder(s) created`.
+- [ ] The **top level** of the bucket appears straight away, on a big bucket too. Log shows
+      `Listed '/': N file(s), M folder(s)` and `M folder(s) will list themselves when opened`.
+- [ ] Sub-folders start empty and fill in when opened — one `Listed '<prefix>/': ...` line per
+      folder you click, and **no** line for folders you never open.
+- [ ] Mount a bucket with a very large root; the app's memory stays flat and the window stays
+      responsive while the folder opens (this is what 0.9 fixed).
 - [ ] Explorer's **Status** column shows the cloud/placeholder glyph (add the column if hidden).
       Files show ~0 bytes "size on disk".
 - [ ] Double-click the large file → it downloads and opens; Status flips to available (green check).
