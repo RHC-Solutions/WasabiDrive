@@ -21,6 +21,13 @@ public enum MappingMode
     /// files show in Explorer but download only when opened, with pin / free-up-space support.
     /// </summary>
     OnDemandFolder,
+
+    /// <summary>
+    /// Virtual drive letter served in-process: WinFsp on top of the S3 SDK directly, with no
+    /// rclone.exe child process. Same Explorer experience as <see cref="DriveLetter"/>, but there
+    /// is no external process to supervise and no mount left behind if the app dies.
+    /// </summary>
+    NativeDriveLetter,
 }
 
 /// <summary>
@@ -57,6 +64,14 @@ public sealed class Mapping
     public string? LocalFolderPath { get; set; }
 
     public CacheSettings Cache { get; set; } = CacheSettings.Default();
+
+    /// <summary>
+    /// True when this mapping is surfaced as a drive letter, whichever engine serves it. Prefer
+    /// this over comparing <see cref="Mode"/> so a new engine does not silently fall through the
+    /// on-demand branch of an if/else.
+    /// </summary>
+    public bool UsesDriveLetter =>
+        Mode is MappingMode.DriveLetter or MappingMode.NativeDriveLetter;
 
     /// <summary>The rclone remote target, e.g. "wasabi_&lt;id&gt;:bucket/subpath".</summary>
     public string RemoteName => "wasabi_" + Id.ToString("N");

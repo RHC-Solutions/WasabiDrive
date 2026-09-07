@@ -3,9 +3,10 @@
 [![Latest release](https://img.shields.io/github/v/release/RHC-Solutions/WasabiDrive?label=latest&sort=semver)](https://github.com/RHC-Solutions/WasabiDrive/releases/latest)
 
 Mount [Wasabi](https://wasabi.com) S3 buckets as native Windows drive letters. WasabiDrive is
-a WPF tray app that drives [rclone](https://rclone.org) (the mount engine) on top of
-[WinFsp](https://winfsp.dev) (the user-mode filesystem), with a GUI for credentials, multiple
-bucket→drive mappings, auto-mount at login, and cache tuning.
+a WPF tray app with a GUI for credentials, multiple bucket→drive mappings, auto-mount at login,
+and cache tuning. Three engines are available per mapping: a drive letter served in-process by
+[WinFsp](https://winfsp.dev), a drive letter driven by [rclone](https://rclone.org), or a
+Files On-Demand folder built on the Windows Cloud Files API.
 
 ## Download
 
@@ -19,12 +20,15 @@ Windows 10/11 x64. Already installed? The app checks for updates on startup and 
 ## How it works
 
 ```
-WasabiDrive.App (WPF tray)  →  WasabiDrive.Core  →  rclone.exe mount  →  WinFsp  →  W:\
+                            ┌→ WasabiDrive.WinFsp      →  WinFsp       →  W:\     (native drive letter)
+WasabiDrive.App (WPF tray) ─┼→ WasabiDrive.Core        →  rclone.exe   →  W:\     (rclone drive letter)
+                            └→ WasabiDrive.CloudFiles  →  Cloud Files  →  folder  (files on-demand)
 ```
 
-Each mapping runs one `rclone mount` child process. Secrets are injected into that process via
-environment variables, so the Wasabi secret key is never written to disk in plaintext nor placed
-on a command line. All config lives under `%LOCALAPPDATA%\WasabiDrive\`:
+The native drive-letter and on-demand engines reach Wasabi through the AWS S3 SDK inside the app's
+own process. The rclone engine instead runs one `rclone mount` child process per mapping, with
+secrets injected via environment variables so the Wasabi secret key is never written to disk in
+plaintext nor placed on a command line. All config lives under `%LOCALAPPDATA%\WasabiDrive\`:
 
 | File | Contents |
 |------|----------|
@@ -42,9 +46,12 @@ on a command line. All config lives under `%LOCALAPPDATA%\WasabiDrive\`:
 ## Project layout
 
 ```
-src/WasabiDrive.Core/   engine + persistence (MountManager, RcloneRunner, stores, DPAPI)
-src/WasabiDrive.App/    WPF tray app (Views, ViewModels, AppController)
-src/WasabiDrive.Tests/  xUnit tests
+src/WasabiDrive.Core/       rclone engine + persistence (MountManager, RcloneRunner, stores, DPAPI)
+src/WasabiDrive.WinFsp/     native drive-letter engine (WinFsp + S3 SDK, no rclone)
+src/WasabiDrive.CloudFiles/ Files On-Demand engine (Windows Cloud Files API)
+src/WasabiDrive.App/        WPF tray app (Views, ViewModels, AppController)
+src/WasabiDrive.Tests/      xUnit tests (Core)
+src/WasabiDrive.WinFsp.Tests/  xUnit tests (splice planner, dirty ranges)
 third_party/rclone/     bundled rclone.exe (pinned, see VERSION.txt)
 third_party/winfsp/     bundled WinFsp MSI (for the installer)
 installer/              Inno Setup script
@@ -78,8 +85,15 @@ The installer bundles `rclone.exe`, installs WinFsp if absent, and creates short
 
 ## Features
 
-- **Two mapping modes (per bucket):**
-  - **Drive letter** — a virtual drive (e.g. `W:`) via rclone + WinFsp (the original mode).
+- **Three mapping modes (per bucket):**
+  - **Drive letter (native)** — a virtual drive (e.g. `W:`) served in-process: WinFsp on top of the
+    AWS S3 SDK, with **no rclone.exe child process** to supervise and no mount left stranded if the
+    app dies. Directory listings are cached with a TTL; file data is cached locally and hydrated in
+    parallel range GETs. Writes record which byte ranges changed, and on close the object is
+    rebuilt with a multipart upload that uploads only the changed parts and takes the rest
+    server-side from the previous version — so a small edit to a large file uploads only what
+    changed instead of the whole object.
+  - **Drive letter (rclone)** — a virtual drive (e.g. `W:`) via rclone + WinFsp (the original mode).
   - **Files On-Demand folder** — a normal folder backed by the **Windows Cloud Files API**, just
     like OneDrive: files show in Explorer as placeholders, download only when opened, and support
     the native **Status** column/overlays and the **"Always keep on this device" / "Free up space"**

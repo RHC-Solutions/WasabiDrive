@@ -38,12 +38,17 @@ public sealed partial class MappingViewModel : ObservableObject
     public string RegionCode => Model.RegionCode;
     public bool AutoMount => Model.AutoMount;
 
-    public string ModeText => Model.Mode == MappingMode.OnDemandFolder ? "On-demand" : "Drive";
+    public string ModeText => Model.Mode switch
+    {
+        MappingMode.OnDemandFolder => "On-demand",
+        MappingMode.NativeDriveLetter => "Drive (native)",
+        _ => "Drive (rclone)",
+    };
 
     /// <summary>Drive letter for drive mode, or the on-demand folder path.</summary>
-    public string Location => Model.Mode == MappingMode.OnDemandFolder
-        ? OnDemandSyncManager.ResolveFolderPath(Model)
-        : Model.DriveTarget;
+    public string Location => Model.UsesDriveLetter
+        ? Model.DriveTarget
+        : OnDemandSyncManager.ResolveFolderPath(Model);
 
     public bool IsMounted => State == MountState.Mounted;
     public bool IsBusy => State is MountState.Mounting or MountState.Unmounting;

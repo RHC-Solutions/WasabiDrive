@@ -21,6 +21,9 @@ public sealed record S3ObjectEntry(string Key, long Size, DateTime LastModifiedU
 public sealed record S3DirectoryPage(
     IReadOnlyList<S3ObjectEntry> Files, IReadOnlyList<string> SubPrefixes);
 
+/// <summary>One finished part of a multipart upload, ready to be passed to complete.</summary>
+public sealed record S3CompletedPart(int PartNumber, string ETag);
+
 /// <summary>
 /// Thin wrapper over the AWS S3 SDK pointed at a Wasabi region endpoint. Used by the Cloud Files
 /// provider to enumerate objects (to build placeholders) and to range-read object bytes on
@@ -198,6 +201,106 @@ public sealed class WasabiS3Client : IDisposable
         };
         var response = await _s3.PutObjectAsync(request, ct).ConfigureAwait(false);
         return response.ETag;
+    }
+
+    // ------------------------------------------------------------------ multipart primitives
+    //
+    // Exposed so a caller can rebuild an object out of a mix of freshly uploaded bytes and ranges
+    // copied server-side from the object's own previous version. That is how a small edit to a
+    // large file avoids re-uploading the whole thing: S3 objects are immutable, but a multipart
+    // upload may take its parts from either source.
+
+    /// <summary>S3 requires every part but the last to be at least this large.</summary>
+    public const long MinimumPartSizeBytes = 5L * 1024 * 1024;
+
+    /// <summary>The part size used when splicing an object back together.</summary>
+    public const long SplicePartSizeBytes = MultipartPartSizeBytes;
+
+    /// <summary>An S3 hard limit: a multipart upload may not exceed 10,000 parts.</summary>
+    public const int MaxPartCount = 10_000;
+
+    /// <summary>Starts a multipart upload and returns its upload id.</summary>
+    public async Task<string> BeginMultipartUploadAsync(string key, CancellationToken ct = default)
+    {
+        var initiated = await _s3.InitiateMultipartUploadAsync(
+            new InitiateMultipartUploadRequest { BucketName = _bucket, Key = key }, ct)
+            .ConfigureAwait(false);
+        return initiated.UploadId;
+    }
+
+    /// <summary>Uploads one part from a byte range of a local file.</summary>
+    public async Task<S3CompletedPart> UploadPartFromFileAsync(
+        string key, string uploadId, int partNumber,
+        string localPath, long filePosition, long length, CancellationToken ct = default)
+    {
+        var response = await _s3.UploadPartAsync(new UploadPartRequest
+        {
+            BucketName = _bucket,
+            Key = key,
+            UploadId = uploadId,
+            PartNumber = partNumber,
+            FilePath = localPath,
+            FilePosition = filePosition,
+            PartSize = length,
+            DisablePayloadSigning = true,
+        }, ct).ConfigureAwait(false);
+
+        return new S3CompletedPart(partNumber, response.ETag);
+    }
+
+    /// <summary>
+    /// Copies one part server-side from a byte range of another object. The bytes never leave
+    /// Wasabi, so an untouched range costs no bandwidth. <paramref name="sourceKey"/> may be the
+    /// destination key itself: the source is read as it stands now, and the completed upload
+    /// replaces it atomically.
+    /// </summary>
+    public async Task<S3CompletedPart> CopyPartAsync(
+        string key, string uploadId, int partNumber,
+        string sourceKey, long firstByte, long lastByte, CancellationToken ct = default)
+    {
+        var response = await _s3.CopyPartAsync(new CopyPartRequest
+        {
+            SourceBucket = _bucket,
+            SourceKey = sourceKey,
+            DestinationBucket = _bucket,
+            DestinationKey = key,
+            UploadId = uploadId,
+            PartNumber = partNumber,
+            FirstByte = firstByte,
+            LastByte = lastByte,
+        }, ct).ConfigureAwait(false);
+
+        return new S3CompletedPart(partNumber, response.ETag);
+    }
+
+    /// <summary>Completes a multipart upload. Parts are sorted by number for you.</summary>
+    public async Task<string?> CompleteMultipartUploadAsync(
+        string key, string uploadId, IEnumerable<S3CompletedPart> parts, CancellationToken ct = default)
+    {
+        var response = await _s3.CompleteMultipartUploadAsync(new CompleteMultipartUploadRequest
+        {
+            BucketName = _bucket,
+            Key = key,
+            UploadId = uploadId,
+            PartETags = parts.OrderBy(p => p.PartNumber)
+                .Select(p => new PartETag(p.PartNumber, p.ETag)).ToList(),
+        }, ct).ConfigureAwait(false);
+
+        return response.ETag;
+    }
+
+    /// <summary>
+    /// Aborts a multipart upload. Always call this on failure: Wasabi bills for the parts of an
+    /// upload that is neither completed nor aborted.
+    /// </summary>
+    public async Task AbortMultipartUploadAsync(string key, string uploadId)
+    {
+        await _s3.AbortMultipartUploadAsync(new AbortMultipartUploadRequest
+        {
+            BucketName = _bucket,
+            Key = key,
+            UploadId = uploadId,
+        }, CancellationToken.None).ConfigureAwait(false);
     }
 
     /// <summary>Deletes an object.</summary>

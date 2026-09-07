@@ -3,11 +3,13 @@
 ; (Inno Setup 6+, https://jrsoftware.org/isdl.php). scripts\build-installer.ps1 does both.
 
 #define AppName "WasabiDrive"
-#define AppVersion "0.9.0"
+#define AppVersion "0.10.0"
 #define AppPublisher "RHC Solutions"
 #define AppPublisherUrl "https://rhcsolutions.com/"
 #define PublishDir "..\src\WasabiDrive.App\bin\Release\net8.0-windows10.0.19041.0\win-x64\publish"
 #define WinFspMsi "..\third_party\winfsp\winfsp.msi"
+; Keep in lockstep with the winfsp.net package (see third_party/winfsp/SOURCE.txt).
+#define WinFspVersion "2.1.25156"
 #define AppIcon "..\src\WasabiDrive.App\Assets\wasabidrive.ico"
 
 [Setup]
@@ -45,17 +47,45 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\WasabiDrive.exe"; Tasks: desk
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"
 
 [Run]
-; Install WinFsp silently only if it is not already present (see IsWinFspInstalled below).
+; Install WinFsp when it is missing OR older than the version we ship. An older driver is not
+; good enough: the managed binding refuses to load against a different major.minor.
 Filename: "msiexec.exe"; Parameters: "/i ""{tmp}\winfsp.msi"" /qn /norestart"; \
-  StatusMsg: "Installing WinFsp (required to mount drives)..."; \
-  Flags: waituntilterminated; Check: not IsWinFspInstalled
+  StatusMsg: "Installing WinFsp {#WinFspVersion} (required to mount drives)..."; \
+  Flags: waituntilterminated; Check: WinFspNeedsInstall
 ; Offer to launch the app after install.
 Filename: "{app}\WasabiDrive.exe"; Description: "Launch WasabiDrive"; \
   Flags: nowait postinstall skipifsilent
 
 [Code]
-function IsWinFspInstalled(): Boolean;
+{ WinFsp records no version in the registry, so the installed version is read from the file
+  version of its own DLL under InstallDir. }
+function TryGetInstalledWinFspVersion(var Packed: Int64): Boolean;
+var
+  Dir: String;
 begin
-  Result := RegKeyExists(HKLM, 'SOFTWARE\WinFsp')
-         or RegKeyExists(HKLM, 'SOFTWARE\WOW6432Node\WinFsp');
+  Result := False;
+  if not RegQueryStringValue(HKLM, 'SOFTWARE\WOW6432Node\WinFsp', 'InstallDir', Dir) then
+    if not RegQueryStringValue(HKLM, 'SOFTWARE\WinFsp', 'InstallDir', Dir) then
+      exit;
+  if Dir = '' then
+    exit;
+  Result := GetPackedVersion(AddBackslash(Dir) + 'bin\winfsp-x64.dll', Packed);
+end;
+
+function WinFspNeedsInstall(): Boolean;
+var
+  Installed, Required: Int64;
+begin
+  { Nothing installed, or a driver we cannot identify: install ours. }
+  if not TryGetInstalledWinFspVersion(Installed) then
+  begin
+    Result := True;
+    exit;
+  end;
+  if not StrToVersion('{#WinFspVersion}', Required) then
+  begin
+    Result := False;
+    exit;
+  end;
+  Result := ComparePackedVersion(Installed, Required) < 0;
 end;
