@@ -12,7 +12,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\wasabidrive.ico</ApplicationIcon>
     <Product>WasabiDrive</Product>
-    <Version>0.9.0</Version>
+    <Version>0.10.0</Version>
     <Company>RHC Solutions</Company>
     <Authors>RHC Solutions</Authors>
     <Copyright>© RHC Solutions. https://rhcsolutions.com/</Copyright>
@@ -23,6 +23,7 @@
   <ItemGroup>
     <ProjectReference Include="..\WasabiDrive.Core\WasabiDrive.Core.csproj" />
     <ProjectReference Include="..\WasabiDrive.CloudFiles\WasabiDrive.CloudFiles.csproj" />
+    <ProjectReference Include="..\WasabiDrive.WinFsp\WasabiDrive.WinFsp.csproj" />
   </ItemGroup>
 
   <ItemGroup>

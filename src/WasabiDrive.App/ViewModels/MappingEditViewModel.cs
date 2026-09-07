@@ -63,14 +63,23 @@ public sealed partial class MappingEditViewModel : ObservableObject
     public IReadOnlyList<string> AvailableDriveLetters { get; }
 
     /// <summary>True when the mapping uses a virtual drive letter (controls which fields show).</summary>
-    public bool IsDriveLetterMode => Mode == MappingMode.DriveLetter;
+    public bool IsDriveLetterMode =>
+        Mode is MappingMode.DriveLetter or MappingMode.NativeDriveLetter;
     public bool IsOnDemandMode => Mode == MappingMode.OnDemandFolder;
 
     /// <summary>Helper text shown under the Mode dropdown explaining the selected mode.</summary>
-    public string ModeDescription => Mode == MappingMode.OnDemandFolder
-        ? "A normal folder in Explorer with cloud placeholders — files download only when opened, "
-          + "with pin / free-up-space and no drive letter. Recommended."
-        : "A virtual drive (e.g. W:) backed by rclone + WinFsp. The whole bucket appears as a mapped drive.";
+    public string ModeDescription => Mode switch
+    {
+        MappingMode.OnDemandFolder =>
+            "A normal folder in Explorer with cloud placeholders — files download only when opened, "
+            + "with pin / free-up-space and no drive letter. Recommended.",
+        MappingMode.NativeDriveLetter =>
+            "A virtual drive (e.g. W:) served in-process: WinFsp on top of the S3 SDK, with no "
+            + "rclone.exe. Small edits to a large file upload only the parts that changed.",
+        _ =>
+            "A virtual drive (e.g. W:) backed by rclone + WinFsp. The whole bucket appears as a "
+            + "mapped drive.",
+    };
 
     /// <summary>
     /// The folder that will actually be used, with the default filled in when no custom location is

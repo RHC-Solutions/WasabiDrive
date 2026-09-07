@@ -9,9 +9,12 @@ namespace WasabiDrive.App.Views;
 public sealed class MappingModeToDisplayConverter : IValueConverter
 {
     public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
-        value is MappingMode.OnDemandFolder
-            ? "On-demand folder (like OneDrive / Google Drive)"
-            : "Drive letter (mapped drive)";
+        value switch
+        {
+            MappingMode.OnDemandFolder => "On-demand folder (like OneDrive / Google Drive)",
+            MappingMode.NativeDriveLetter => "Drive letter (native, no rclone)",
+            _ => "Drive letter (rclone)",
+        };
 
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
         throw new NotSupportedException();

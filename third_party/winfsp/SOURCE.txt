@@ -1,1 +1,12 @@
-https://github.com/winfsp/winfsp/releases/download/v2.0/winfsp-2.0.23075.msi
+https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi
+
+WinFsp 2.1 (stable). Download the MSI above and save it next to this file as winfsp.msi;
+the installer bundles it and the build scripts expect that name. The file is gitignored.
+
+Keep this in lockstep with the winfsp.net package version in
+src/WasabiDrive.WinFsp/WasabiDrive.WinFsp.csproj. The managed binding refuses to load against a
+driver with a different major.minor -- winfsp.net 2.2 against a 2.1 driver fails at type-init with
+"incorrect dll version (need 2.2, have 2.1)" -- so the bundled MSI and the package are one
+decision, not two. 2.2 exists only as a beta (v2.2B1..B4), so stable 2.1 is the pinned pair:
+
+    winfsp.net 2.1.25156  <->  winfsp-2.1.25156.msi

@@ -6,6 +6,7 @@ using WasabiDrive.App.ViewModels;
 using WasabiDrive.CloudFiles;
 using WasabiDrive.Core;
 using WasabiDrive.Core.Models;
+using WasabiDrive.WinFsp;
 
 namespace WasabiDrive.App.Services;
 
@@ -27,6 +28,11 @@ public sealed class AppController
     private Timer? _dehydrationTimer;
 
     private MountManager? _mountManager;
+
+    // The rclone-free drive-letter engine: WinFsp driven straight from the S3 SDK, in-process.
+    private readonly S3MountManager _nativeMountManager;
+
+    public AppController() => _nativeMountManager = new S3MountManager(SafeLog);
 
     /// <summary>Folder that holds the daily log files.</summary>
     public string LogsDirectory => AppPaths.LogsDir;
@@ -53,9 +59,9 @@ public sealed class AppController
 
     /// <summary>Local roots of all mappings (drive letters + on-demand folders) for shell scoping.</summary>
     public IReadOnlyCollection<string> GetShellRoots() =>
-        Mappings.Select(m => m.Model.Mode == MappingMode.OnDemandFolder
-                ? OnDemandSyncManager.ResolveFolderPath(m.Model)
-                : m.Model.DriveTarget)
+        Mappings.Select(m => m.Model.UsesDriveLetter
+                ? m.Model.DriveTarget
+                : OnDemandSyncManager.ResolveFolderPath(m.Model))
             .Where(r => !string.IsNullOrWhiteSpace(r))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -135,9 +141,34 @@ public sealed class AppController
             return;
         }
 
+        if (vm.Model.Mode == MappingMode.NativeDriveLetter)
+        {
+            await MountNativeAsync(vm, creds).ConfigureAwait(true);
+            return;
+        }
+
         if (_mountManager is null)
             throw new InvalidOperationException(RcloneError ?? "rclone is unavailable.");
         await _mountManager.MountAsync(vm.Model, creds).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Mounts through the in-process WinFsp engine. No child process, so the status transitions
+    /// are raised here rather than arriving from a mount process's output.
+    /// </summary>
+    private async Task MountNativeAsync(MappingViewModel vm, WasabiCredentials creds)
+    {
+        RunOnUi(() => vm.ApplyStatus(MountState.Mounting, $"Mounting {vm.Model.DriveTarget}…"));
+        try
+        {
+            await Task.Run(() => _nativeMountManager.Mount(vm.Model, creds)).ConfigureAwait(true);
+            RunOnUi(() => vm.ApplyStatus(MountState.Mounted, $"Mounted at {vm.Model.DriveTarget}"));
+        }
+        catch (Exception ex)
+        {
+            RunOnUi(() => vm.ApplyStatus(MountState.Error, ex.Message));
+            throw;
+        }
     }
 
     public async Task UnmountAsync(MappingViewModel vm)
@@ -147,6 +178,22 @@ public sealed class AppController
             DisableOnDemand(vm);
             return;
         }
+
+        if (vm.Model.Mode == MappingMode.NativeDriveLetter)
+        {
+            RunOnUi(() => vm.ApplyStatus(MountState.Unmounting, null));
+            try
+            {
+                await Task.Run(() => _nativeMountManager.Unmount(vm.Model.Id)).ConfigureAwait(true);
+                RunOnUi(() => vm.ApplyStatus(MountState.Unmounted, null));
+            }
+            catch (Exception ex)
+            {
+                RunOnUi(() => vm.ApplyStatus(MountState.Error, ex.Message));
+            }
+            return;
+        }
+
         if (_mountManager is null) return;
         await _mountManager.UnmountAsync(vm.Model.Id).ConfigureAwait(true);
     }
@@ -254,6 +301,10 @@ public sealed class AppController
             }
             _onDemand.Clear();
         }
+
+        // In-process mounts die with the process, so unmount them cleanly first or Explorer is
+        // left showing a drive letter that answers nothing.
+        try { _nativeMountManager.Dispose(); } catch { /* best-effort */ }
 
         if (_mountManager is not null)
             await _mountManager.UnmountAllAsync().ConfigureAwait(false);

@@ -182,7 +182,7 @@ internal static class ShellCommand
     /// </summary>
     private static string RequireFolder(Mapping mapping, string key, string path)
     {
-        if (mapping.Mode != MappingMode.DriveLetter)
+        if (!mapping.UsesDriveLetter)
             throw new InvalidOperationException(
                 "Bulk operations are only available on drive-letter mounts, not on-demand folders.");
         if (!IsDirectory(path))
